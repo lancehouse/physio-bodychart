@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=PhysioChart
+Comment=Physiotherapy body chart with symptom drawing and clinical overlays
+Exec=physio-bodychart
+Icon=physio-bodychart
+Terminal=false
+Type=Application
+Categories=Science;MedicalSoftware;
+Keywords=physio;physiotherapy;body chart;pain;dermatome;
+StartupNotify=true
