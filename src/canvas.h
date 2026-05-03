@@ -5,6 +5,8 @@
 #include "overlays.h"
 #include "body_outlines.h"
 #include "input.h"
+#include "obj_chart.h"
+#include "report.h"
 
 typedef enum {
     APP_MODE_SUBJECTIVE = 0,
@@ -169,6 +171,37 @@ struct _AppState {
     char     session_dir[512];    /* ~/PhysioChart/JB_01_05_2026_1430 */
     char     session_file[512];   /* full path to _session.json */
     time_t   session_created;
+
+    /* ── Objective chart ─────────────────────────────────────────────────────── */
+    ObjZone  *obj_zones[MAX_OBJ_ZONES];
+    int       obj_zone_count;
+    ObjZone  *obj_active_zone;      /* in-progress zone being drawn */
+    ObjPoint  obj_points[MAX_OBJ_POINTS];
+    int       obj_point_count;
+    ObjZoneType   obj_zone_type;    /* currently selected zone type */
+    ObjPointType  obj_point_type;   /* currently selected point type */
+    gboolean  obj_point_mode;       /* TRUE = point tool, FALSE = zone tool */
+    gboolean  obj_erase_mode;       /* TRUE = erase obj items */
+    gboolean  obj_wide_mode;        /* wide-band zone drawing */
+    /* Objective undo: 0=zone, 1=point */
+    guint8    obj_undo_type_stack[64];
+    int       obj_undo_type_top;
+    /* Callback: show PPT value entry dialog; set by window.c */
+    void (*show_ppt_entry_cb)(AppState *, int view, double bx, double by);
+
+    /* Obj point drag state */
+    int     obj_point_drag_idx;
+    double  obj_point_drag_bx_off;
+    double  obj_point_drag_by_off;
+
+    /* Stroke cache version counter — incremented whenever committed strokes
+     * or arrows change (stroke commit/undo/clear/load, arrow add/delete).
+     * Each ColData compares its own cache_stroke_version against this to
+     * decide whether to re-render the offscreen cache surface. */
+    int     stroke_version;
+
+    /* ── Report ─────────────────────────────────────────────────────────────── */
+    ReportData  report;
 };
 
 GtkWidget  *canvas_new(AppState *app);

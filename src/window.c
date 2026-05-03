@@ -5,6 +5,7 @@
 #include "stroke.h"
 #include "session.h"
 #include "persistence.h"
+#include "report.h"
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -18,7 +19,19 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl,
                                 GdkModifierType mods, gpointer data)
 {
     (void)ctrl; (void)keycode;
-    return input_key_pressed((AppState *)data, keyval, mods);
+    AppState *app = (AppState *)data;
+    if (app->current_mode == APP_MODE_REPORT) {
+        if (keyval == GDK_KEY_F5) {
+            report_activate(app);
+            return TRUE;
+        }
+        if ((mods & GDK_CONTROL_MASK) && (mods & GDK_SHIFT_MASK) &&
+            (keyval == GDK_KEY_C || keyval == GDK_KEY_c)) {
+            report_copy_all(app);
+            return TRUE;
+        }
+    }
+    return input_key_pressed(app, keyval, mods);
 }
 
 /* ── Symptom buttons ────────────────────────────────────────────────────── */
@@ -348,6 +361,14 @@ static GtkWidget *g_mode_btns[APP_MODE_COUNT];
 static GtkWidget *g_file_status_label;   /* shared status in file tab + mode strip */
 static AppState  *g_app_ref;
 
+/* ── Obj mode sidebar widget refs ────────────────────────────────────────── */
+static GtkWidget *g_obj_zone_btns[OBJ_ZONE_COUNT];
+static GtkWidget *g_obj_ppt_btn;
+static GtkWidget *g_obj_ts_btn;
+static GtkWidget *g_obj_erase_btn;
+static GtkWidget *g_sidebar_content_stack;
+static GtkWidget *g_content_stack;   /* chart vs report */
+
 static void update_toolbar_state(AppState *app)
 {
     if (!g_app_ref) return;
@@ -436,14 +457,65 @@ static void update_toolbar_state(AppState *app)
         gtk_widget_set_name(g_mode_btns[i],
             (AppMode)i == app->current_mode ? "mode-btn-active" : "mode-btn");
     }
+
+    /* ── Objective sidebar button states ── */
+    for (int i = 0; i < OBJ_ZONE_COUNT; i++) {
+        if (!g_obj_zone_btns[i]) continue;
+        gboolean active = (app->current_mode == APP_MODE_OBJECTIVE &&
+                           !app->obj_point_mode &&
+                           app->tool != TOOL_ERASE &&
+                           app->obj_zone_type == (ObjZoneType)i);
+        gtk_widget_set_name(g_obj_zone_btns[i],
+                            active ? "tool-btn-active" : "tool-btn");
+    }
+    if (g_obj_ppt_btn)
+        gtk_widget_set_name(g_obj_ppt_btn,
+            (app->current_mode == APP_MODE_OBJECTIVE &&
+             app->obj_point_mode &&
+             app->obj_point_type == OBJ_POINT_PPT)
+            ? "tool-btn-active" : "tool-btn");
+    if (g_obj_ts_btn)
+        gtk_widget_set_name(g_obj_ts_btn,
+            (app->current_mode == APP_MODE_OBJECTIVE &&
+             app->obj_point_mode &&
+             app->obj_point_type == OBJ_POINT_TEMPORAL_SUM)
+            ? "tool-btn-active" : "tool-btn");
+    if (g_obj_erase_btn)
+        gtk_widget_set_name(g_obj_erase_btn,
+            (app->current_mode == APP_MODE_OBJECTIVE &&
+             app->tool == TOOL_ERASE)
+            ? "tool-btn-active" : "tool-btn");
+
+    /* ── Sidebar content stack: switch per mode ── */
+    if (g_sidebar_content_stack) {
+        const char *page;
+        switch (app->current_mode) {
+            case APP_MODE_OBJECTIVE: page = "obj"; break;
+            case APP_MODE_REPORT:    page = "rpt"; break;
+            default:                 page = "sx";  break;
+        }
+        gtk_stack_set_visible_child_name(
+            GTK_STACK(g_sidebar_content_stack), page);
+    }
+
+    /* ── Content stack: chart vs report ── */
+    if (g_content_stack) {
+        gtk_stack_set_visible_child_name(GTK_STACK(g_content_stack),
+            app->current_mode == APP_MODE_REPORT ? "report" : "chart");
+    }
 }
 
 /* ── Auto-save ───────────────────────────────────────────────────────────── */
 void window_autosave(AppState *app)
 {
     if (!app->session_file[0]) return;
+    /* Capture report edits before saving JSON */
+    if (app->current_mode == APP_MODE_REPORT)
+        report_deactivate(app);
     gboolean ok = persistence_save(app);
     if (ok) ok = session_export_subj_png(app);
+    if (app->current_mode == APP_MODE_REPORT)
+        report_save_md(app);
     if (g_file_status_label) {
         if (ok) {
             time_t now = time(NULL);
@@ -465,8 +537,18 @@ static void on_mode_clicked(GtkButton *btn, gpointer data)
     AppState  *app  = pair[0];
     AppMode    mode = (AppMode)(gintptr)pair[1];
     if (app->current_mode == mode) return;
+
+    /* Leaving report mode: capture user edits before switching */
+    if (app->current_mode == APP_MODE_REPORT)
+        report_deactivate(app);
+
     window_autosave(app);
     app->current_mode = mode;
+
+    /* Entering report mode: regenerate buffer */
+    if (mode == APP_MODE_REPORT)
+        report_activate(app);
+
     update_toolbar_state(app);
     canvas_invalidate(app);
 }
@@ -571,6 +653,35 @@ static void apply_css(void)
         "  background: #2a4a70; color: #dde; border: 1px solid #4a6a90; }"
         "#wiz-qual-btn:hover { background: #3a5a80; color: #fff; }"
         "#wiz-window { background: #1a1a2e; }"
+
+        /* ── Report view ── */
+        "#report-root { background: #0a0a14; }"
+        "#report-toolbar { background: #0a0a14; border-bottom: 1px solid #1a1a30; }"
+        "#rpt-btn { background: #151528; color: #7878a8; border: 1px solid #252545;"
+        "  font-size: 11px; min-height: 28px; border-radius: 4px; padding: 0 8px; }"
+        "#rpt-btn:hover { background: #1e1e38; color: #aac; }"
+        "#report-status { color: #445; font-size: 10px; }"
+        "#report-tv { font-size: 14px; caret-color: #ffcc44; }"
+        "#report-tv text { background: #0d0d1a; color: #c0c0d8; }"
+        "#report-tv selection { background: #1a3a5a; }"
+
+        /* ── Subjective wizard ── */
+        "#subj-btn-row { background: transparent; }"
+        "#subj-btn { font-size: 13px; min-height: 40px; min-width: 84px;"
+        "  background: #1a2444; color: #88aadd; border: 1px solid #2e4070;"
+        "  border-radius: 5px; padding: 0 10px; margin: 2px; }"
+        "#subj-btn:hover { background: #243060; color: #aaccff; }"
+        "#subj-opt-btn { font-size: 13px; min-height: 36px; min-width: 80px;"
+        "  background: #162040; color: #7aabcc; border: 1px solid #264060;"
+        "  border-radius: 4px; padding: 0 8px; margin: 3px; }"
+        "#subj-opt-btn:hover { background: #1e3050; color: #b0d8f0; }"
+        "#subj-opt-sub { font-size: 12px; min-height: 32px; min-width: 70px;"
+        "  background: #0e1830; color: #5a88aa; border: 1px solid #1c2e48;"
+        "  border-radius: 4px; padding: 0 6px; margin: 3px; }"
+        "#subj-opt-sub:hover { background: #162440; color: #90bbdd; }"
+        "#subj-hint { font-size: 12px; color: #6a7898; font-style: italic; }"
+        "#subj-tv text { background: #0d0d20; color: #d0d0e8; }"
+        "#subj-tv { font-size: 14px; caret-color: #aaccff; }"
     );
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
@@ -1123,6 +1234,244 @@ static GtkWidget *build_file_tab(void)
     return box;
 }
 
+/* ── PPT / TS value entry dialog ─────────────────────────────────────────── */
+typedef struct {
+    AppState    *app;
+    int          view;
+    double       bx, by;
+    ObjPointType type;
+    GtkWidget   *window;
+    GtkWidget   *entry;
+} PPTEntryData;
+
+/* Called when the PPT window is destroyed (by OK, Cancel, or WM close).
+ * Frees the PPTEntryData allocation exactly once. */
+static void on_ppt_destroy(GtkWidget *w, gpointer data)
+{
+    (void)w;
+    g_free(data);
+}
+
+static void on_ppt_confirm(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    PPTEntryData *pd = data;
+    const char *txt = gtk_editable_get_text(GTK_EDITABLE(pd->entry));
+    double val = g_strtod(txt, NULL);
+    AppState *app = pd->app;
+    if (app->obj_point_count < MAX_OBJ_POINTS) {
+        ObjPoint *p = &app->obj_points[app->obj_point_count];
+        p->bx    = pd->bx;
+        p->by    = pd->by;
+        p->view  = pd->view;
+        p->type  = pd->type;
+        p->value = val;
+        if (pd->type == OBJ_POINT_PPT)
+            snprintf(p->label, sizeof(p->label), "%.1f", val);
+        else
+            snprintf(p->label, sizeof(p->label), "%d", (int)CLAMP(val, 0.0, 10.0));
+        app->obj_point_count++;
+        if (app->obj_undo_type_top < 64)
+            app->obj_undo_type_stack[app->obj_undo_type_top++] = 1;
+        canvas_invalidate(app);
+    }
+    /* g_free(pd) happens via on_ppt_destroy connected to "destroy" signal */
+    gtk_window_destroy(GTK_WINDOW(pd->window));
+}
+
+static void on_ppt_cancel(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    PPTEntryData *pd = data;
+    /* g_free(pd) happens via on_ppt_destroy connected to "destroy" signal */
+    gtk_window_destroy(GTK_WINDOW(pd->window));
+}
+
+static void show_ppt_entry(AppState *app, int view, double bx, double by)
+{
+    PPTEntryData *pd = g_malloc0(sizeof(PPTEntryData));
+    pd->app  = app;
+    pd->view = view;
+    pd->bx   = bx;
+    pd->by   = by;
+    pd->type = app->obj_point_type;
+
+    pd->window = gtk_window_new();
+    gtk_widget_set_name(pd->window, "wiz-window");
+    const char *title = (pd->type == OBJ_POINT_PPT) ? "PPT (kg/cm²)" : "Temporal Sum (0–10)";
+    gtk_window_set_title(GTK_WINDOW(pd->window), title);
+    gtk_window_set_transient_for(GTK_WINDOW(pd->window),
+                                 GTK_WINDOW(app->window));
+    gtk_window_set_modal(GTK_WINDOW(pd->window), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(pd->window), FALSE);
+    gtk_window_set_default_size(GTK_WINDOW(pd->window), 260, -1);
+    /* Free pd exactly once on any close path (OK, Cancel, or WM close). */
+    g_signal_connect(pd->window, "destroy", G_CALLBACK(on_ppt_destroy), pd);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(box, 16);
+    gtk_widget_set_margin_end(box, 16);
+    gtk_widget_set_margin_top(box, 12);
+    gtk_widget_set_margin_bottom(box, 12);
+
+    GtkWidget *lbl = gtk_label_new(title);
+    gtk_widget_set_name(lbl, "section-label");
+    gtk_box_append(GTK_BOX(box), lbl);
+
+    pd->entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(pd->entry),
+        (pd->type == OBJ_POINT_PPT) ? "e.g. 4.2" : "0–10");
+    gtk_widget_set_size_request(pd->entry, -1, 48);
+    gtk_box_append(GTK_BOX(box), pd->entry);
+
+    GtkWidget *btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
+    GtkWidget *ok_btn     = gtk_button_new_with_label("OK");
+    gtk_widget_set_hexpand(cancel_btn, TRUE);
+    gtk_widget_set_hexpand(ok_btn,     TRUE);
+    gtk_widget_set_size_request(cancel_btn, -1, 44);
+    gtk_widget_set_size_request(ok_btn,     -1, 44);
+    gtk_box_append(GTK_BOX(btn_row), cancel_btn);
+    gtk_box_append(GTK_BOX(btn_row), ok_btn);
+    gtk_box_append(GTK_BOX(box), btn_row);
+
+    g_signal_connect(ok_btn,     "clicked",  G_CALLBACK(on_ppt_confirm), pd);
+    g_signal_connect(cancel_btn, "clicked",  G_CALLBACK(on_ppt_cancel),  pd);
+    g_signal_connect(pd->entry,  "activate", G_CALLBACK(on_ppt_confirm), pd);
+    gtk_window_set_default_widget(GTK_WINDOW(pd->window), ok_btn);
+
+    gtk_window_set_child(GTK_WINDOW(pd->window), box);
+    gtk_widget_grab_focus(pd->entry);
+    gtk_window_present(GTK_WINDOW(pd->window));
+}
+
+/* ── Obj tab button callbacks ────────────────────────────────────────────── */
+static void on_obj_zone_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    gpointer *pair  = data;
+    AppState *app   = pair[0];
+    ObjZoneType zt  = (ObjZoneType)(gintptr)pair[1];
+    app->obj_zone_type  = zt;
+    app->obj_point_mode = FALSE;
+    app->tool = TOOL_DRAW;
+    if (app->toolbar_update_cb) app->toolbar_update_cb(app);
+}
+
+static void on_obj_ppt_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    AppState *app = data;
+    app->obj_point_mode = TRUE;
+    app->obj_point_type = OBJ_POINT_PPT;
+    app->tool = TOOL_DRAW;
+    if (app->toolbar_update_cb) app->toolbar_update_cb(app);
+}
+
+static void on_obj_ts_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    AppState *app = data;
+    app->obj_point_mode = TRUE;
+    app->obj_point_type = OBJ_POINT_TEMPORAL_SUM;
+    app->tool = TOOL_DRAW;
+    if (app->toolbar_update_cb) app->toolbar_update_cb(app);
+}
+
+static void on_obj_erase_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    AppState *app = data;
+    app->tool = TOOL_ERASE;
+    if (app->toolbar_update_cb) app->toolbar_update_cb(app);
+}
+
+static void on_obj_undo_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    canvas_undo((AppState *)data);
+}
+
+/* ── Build "Obj" tab content ─────────────────────────────────────────────── */
+static GtkWidget *build_obj_tab(AppState *app)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+    gtk_widget_set_name(box, "toolbar");
+    gtk_widget_set_margin_start(box, 2);
+    gtk_widget_set_margin_end(box, 2);
+    gtk_widget_set_margin_top(box, 2);
+
+    /* ── Zone section ── */
+    GtkWidget *lbl_z = gtk_label_new("Zone");
+    gtk_widget_set_name(lbl_z, "section-label");
+    gtk_box_append(GTK_BOX(box), lbl_z);
+
+    static gpointer zone_pairs[OBJ_ZONE_COUNT][2];
+    GtkWidget *zone_grid = make_grid2col();
+    for (int i = 0; i < OBJ_ZONE_COUNT; i++) {
+        const char *lbl = OBJ_ZONE_DEFS[i].short_name;
+        GtkWidget *btn = make_btn(lbl, -1, 36);
+        gtk_widget_set_hexpand(btn, TRUE);
+        if (i == OBJ_ZONE_COUNT - 1)
+            gtk_grid_attach(GTK_GRID(zone_grid), btn, 0, i / 2, 2, 1);
+        else
+            gtk_grid_attach(GTK_GRID(zone_grid), btn, i % 2, i / 2, 1, 1);
+        zone_pairs[i][0] = app;
+        zone_pairs[i][1] = (gpointer)(gintptr)i;
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_obj_zone_clicked), zone_pairs[i]);
+        g_obj_zone_btns[i] = btn;
+    }
+    gtk_box_append(GTK_BOX(box), zone_grid);
+
+    gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+    /* ── Point section ── */
+    GtkWidget *lbl_p = gtk_label_new("Point");
+    gtk_widget_set_name(lbl_p, "section-label");
+    gtk_box_append(GTK_BOX(box), lbl_p);
+
+    GtkWidget *pt_grid = make_grid2col();
+
+    g_obj_ppt_btn = make_btn("PPT", -1, 36);
+    gtk_widget_set_hexpand(g_obj_ppt_btn, TRUE);
+    g_signal_connect(g_obj_ppt_btn, "clicked", G_CALLBACK(on_obj_ppt_clicked), app);
+    gtk_grid_attach(GTK_GRID(pt_grid), g_obj_ppt_btn, 0, 0, 1, 1);
+
+    g_obj_ts_btn = make_btn("TS", -1, 36);
+    gtk_widget_set_hexpand(g_obj_ts_btn, TRUE);
+    g_signal_connect(g_obj_ts_btn, "clicked", G_CALLBACK(on_obj_ts_clicked), app);
+    gtk_grid_attach(GTK_GRID(pt_grid), g_obj_ts_btn, 1, 0, 1, 1);
+
+    gtk_box_append(GTK_BOX(box), pt_grid);
+
+    gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+
+    /* ── Tools section ── */
+    GtkWidget *lbl_t = gtk_label_new("Tools");
+    gtk_widget_set_name(lbl_t, "section-label");
+    gtk_box_append(GTK_BOX(box), lbl_t);
+
+    GtkWidget *tool_grid = make_grid2col();
+
+    g_obj_erase_btn = make_btn("Erase", -1, 36);
+    gtk_widget_set_hexpand(g_obj_erase_btn, TRUE);
+    g_signal_connect(g_obj_erase_btn, "clicked", G_CALLBACK(on_obj_erase_clicked), app);
+    gtk_grid_attach(GTK_GRID(tool_grid), g_obj_erase_btn, 0, 0, 1, 1);
+
+    GtkWidget *undo_btn = make_btn("Undo", -1, 36);
+    gtk_widget_set_hexpand(undo_btn, TRUE);
+    g_signal_connect(undo_btn, "clicked", G_CALLBACK(on_obj_undo_clicked), app);
+    gtk_grid_attach(GTK_GRID(tool_grid), undo_btn, 1, 0, 1, 1);
+
+    gtk_box_append(GTK_BOX(box), tool_grid);
+
+    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_vexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(box), spacer);
+
+    return box;
+}
+
 /* ── Mode strip ──────────────────────────────────────────────────────────── */
 static GtkWidget *build_mode_strip(AppState *app)
 {
@@ -1163,10 +1512,18 @@ static GtkWidget *build_sidebar(AppState *app)
     gtk_box_append(GTK_BOX(outer), build_mode_strip(app));
     gtk_box_append(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 
-    /* Tab bar */
+    /* Outer content stack: switches between Sx content, Obj tab, Rpt placeholder */
+    g_sidebar_content_stack = gtk_stack_new();
+    gtk_stack_set_transition_type(GTK_STACK(g_sidebar_content_stack),
+                                  GTK_STACK_TRANSITION_TYPE_NONE);
+    gtk_widget_set_vexpand(g_sidebar_content_stack, TRUE);
+
+    /* ── Sx content: D/F tab bar + draw/file stack ── */
+    GtkWidget *sx_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_vexpand(sx_box, TRUE);
+
     GtkWidget *tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_name(tab_bar, "tab-bar");
-
     static const char *tab_labels[N_TABS] = { "D", "F" };
     for (int i = 0; i < N_TABS; i++) {
         GtkWidget *btn = gtk_button_new_with_label(tab_labels[i]);
@@ -1178,15 +1535,13 @@ static GtkWidget *build_sidebar(AppState *app)
         g_tab_btns[i] = btn;
         gtk_box_append(GTK_BOX(tab_bar), btn);
     }
-    gtk_box_append(GTK_BOX(outer), tab_bar);
+    gtk_box_append(GTK_BOX(sx_box), tab_bar);
 
-    /* Tab content stack */
     g_tab_stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(g_tab_stack),
                                   GTK_STACK_TRANSITION_TYPE_NONE);
     gtk_widget_set_vexpand(g_tab_stack, TRUE);
 
-    /* Helper: wrap a child in a scrolled window and add to stack */
     #define ADD_TAB(child, name) \
     do { \
         GtkWidget *_sc = gtk_scrolled_window_new(); \
@@ -1202,7 +1557,33 @@ static GtkWidget *build_sidebar(AppState *app)
 
     #undef ADD_TAB
 
-    gtk_box_append(GTK_BOX(outer), g_tab_stack);
+    gtk_box_append(GTK_BOX(sx_box), g_tab_stack);
+    gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), sx_box, "sx");
+
+    /* ── Obj content ── */
+    GtkWidget *obj_sc = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(obj_sc),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(obj_sc), FALSE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(obj_sc), build_obj_tab(app));
+    gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), obj_sc, "obj");
+
+    /* ── Rpt sidebar ── */
+    GtkWidget *rpt_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_margin_top(rpt_box, 10);
+    gtk_widget_set_margin_start(rpt_box, 6);
+    gtk_widget_set_margin_end(rpt_box, 6);
+    GtkWidget *rpt_hdr = gtk_label_new("Report");
+    gtk_widget_set_name(rpt_hdr, "section-label");
+    gtk_box_append(GTK_BOX(rpt_box), rpt_hdr);
+    GtkWidget *rpt_hint = gtk_label_new("F5  Regenerate\nCtrl+Shift+C  Copy");
+    gtk_widget_set_name(rpt_hint, "section-label");
+    gtk_label_set_justify(GTK_LABEL(rpt_hint), GTK_JUSTIFY_LEFT);
+    gtk_label_set_xalign(GTK_LABEL(rpt_hint), 0.0);
+    gtk_box_append(GTK_BOX(rpt_box), rpt_hint);
+    gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), rpt_box, "rpt");
+
+    gtk_box_append(GTK_BOX(outer), g_sidebar_content_stack);
 
     set_active_tab(0);
     return outer;
@@ -1279,6 +1660,13 @@ static void on_recent_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointe
         launch_commit_open(NULL, ld);
 }
 
+static void on_id_entry_activate(GtkEntry *e, gpointer data)
+{
+    (void)e;
+    LaunchData *ld = data;
+    gtk_widget_grab_focus(ld->label_entry);
+}
+
 void window_show_launch(AppState *app, GtkApplication *gapp)
 {
     apply_css();
@@ -1330,12 +1718,17 @@ void window_show_launch(AppState *app, GtkApplication *gapp)
     gtk_widget_set_hexpand(ld->label_entry, TRUE);
     gtk_box_append(GTK_BOX(outer), ld->label_entry);
 
+    /* Enter in ID field → focus label field; Enter in label field → start session */
+    g_signal_connect(ld->id_entry,    "activate", G_CALLBACK(on_id_entry_activate), ld);
+    g_signal_connect(ld->label_entry, "activate", G_CALLBACK(launch_commit_new),    ld);
+
     /* New session button */
     GtkWidget *new_btn = gtk_button_new_with_label("New Session");
     gtk_widget_set_name(new_btn, "launch-btn");
     gtk_widget_set_size_request(new_btn, -1, 48);
     g_signal_connect(new_btn, "clicked", G_CALLBACK(launch_commit_new), ld);
     gtk_box_append(GTK_BOX(outer), new_btn);
+    gtk_window_set_default_widget(GTK_WINDOW(ld->window), new_btn);
 
     gtk_box_append(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 
@@ -1438,6 +1831,7 @@ void window_create(AppState *app, GtkApplication *gtk_app)
     g_app_ref = app;
     app->toolbar_update_cb    = update_toolbar_state;
     app->show_note_wizard_cb  = show_note_wizard;
+    app->show_ppt_entry_cb    = show_ppt_entry;
     apply_css();
 
     app->window = gtk_application_window_new(gtk_app);
@@ -1453,8 +1847,16 @@ void window_create(AppState *app, GtkApplication *gtk_app)
 
     gtk_box_append(GTK_BOX(hbox), build_sidebar(app));
 
+    g_content_stack = gtk_stack_new();
+    gtk_stack_set_transition_type(GTK_STACK(g_content_stack),
+                                  GTK_STACK_TRANSITION_TYPE_NONE);
+    gtk_widget_set_hexpand(g_content_stack, TRUE);
+    gtk_widget_set_vexpand(g_content_stack, TRUE);
+
     GtkWidget *canvas = canvas_new(app);
-    gtk_box_append(GTK_BOX(hbox), canvas);
+    gtk_stack_add_named(GTK_STACK(g_content_stack), canvas, "chart");
+    gtk_stack_add_named(GTK_STACK(g_content_stack), report_view_new(app), "report");
+    gtk_box_append(GTK_BOX(hbox), g_content_stack);
 
     GtkEventController *key_ctrl = gtk_event_controller_key_new();
     gtk_widget_add_controller(app->window, key_ctrl);

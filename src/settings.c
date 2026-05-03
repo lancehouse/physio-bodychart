@@ -65,7 +65,7 @@ static void parse_hotkey(const char *val, guint *out_kv, GdkModifierType *out_mo
 static void settings_path(char *buf, size_t len)
 {
     const char *home = g_get_home_dir();
-    snprintf(buf, len, "%s/.config/physiochart/settings.conf", home);
+    snprintf(buf, len, "%s/.config/physio-bodychart/settings.conf", home);
 }
 
 void settings_load(AppState *app)

@@ -118,6 +118,7 @@ void input_begin(AppState *app, double x, double y, double pressure)
                         for (int k = i; k < app->strokes->n - 1; k++)
                             app->strokes->strokes[k] = app->strokes->strokes[k+1];
                         app->strokes->n--;
+                        app->stroke_version++;  /* stroke erased — invalidate cache */
                         return;
                     }
                 }
@@ -157,6 +158,7 @@ void input_end(AppState *app)
             stroke_list_push(app->strokes, app->active_stroke);
             if (app->undo_type_top < 64)
                 app->undo_type_stack[app->undo_type_top++] = 0;
+            app->stroke_version++;  /* new committed stroke — invalidate cache */
         } else {
             stroke_free(app->active_stroke);
         }

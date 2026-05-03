@@ -21,6 +21,8 @@ sources = files(
   'src/session.c',
   'src/settings.c',
   'src/persistence.c',
+  'src/obj_chart.c',
+  'src/report.c',
   'src/overlay_data/dermatomes.c',
   'src/overlay_data/peripheral.c',
   'src/overlay_data/somatic.c',

@@ -1,6 +1,6 @@
-# PhysioChart Settings
+# PhysioBodyChart Settings
 
-Config file: `~/.config/physiochart/settings.conf`  
+Config file: `~/.config/physio-bodychart/settings.conf`  
 All settings are optional. Remove a line to use the built-in default.  
 Changes take effect on next launch.
 
@@ -161,9 +161,9 @@ Set to `none` to disable a hotkey.
 
 | Action | Default | Description |
 |--------|---------|-------------|
-| `hotkey_save_svg` | `ctrl+s` | Save as SVG to ~/PhysioChart/ |
-| `hotkey_save_png` | `ctrl+shift+s` | Export PNG to ~/PhysioChart/ |
-| `hotkey_save_pdf` | `ctrl+p` | Export PDF to ~/PhysioChart/ |
+| `hotkey_save_svg` | `ctrl+s` | Save as SVG to ~/Physio-Bodychart/ |
+| `hotkey_save_png` | `ctrl+shift+s` | Export PNG to ~/Physio-Bodychart/ |
+| `hotkey_save_pdf` | `ctrl+p` | Export PDF to ~/Physio-Bodychart/ |
 
 ---
 
@@ -185,5 +185,64 @@ Arguments are parsed before GTK sees them.
 Settings apply in this order (later wins):
 
 1. Built-in defaults
-2. Config file (`~/.config/physiochart/settings.conf`)
+2. Config file (`~/.config/physio-bodychart/settings.conf`)
 3. Command-line arguments
+
+---
+
+## Subjective interview template
+
+File: `~/.config/physio-bodychart/subjective_prompts.md`
+
+Written automatically on first launch. Edit it in Obsidian or any text editor; changes take effect on next launch. The file uses plain Markdown so it is Obsidian-compatible.
+
+### Format
+
+```markdown
+## Field name
+> One-line hint shown at the top of the popup.
+- Top-level option
+  - Sub-option (2-space indent)
+- Another option
+  - Sub-option A
+  - Sub-option B
+```
+
+**Rules:**
+
+| Syntax | Meaning |
+|--------|---------|
+| `## History` | Declares the History field. Must match one of the four field names exactly (case-insensitive): `History`, `Aggs`, `Ease`, `24hr Pattern`. |
+| `> hint text` | Sets the grey italic hint line shown at the top of the popup for that field. |
+| `- option` | Top-level quick-fill button (brighter, larger). Tapping it appends the option text to the entry on a new line. |
+| `  - sub-option` | Sub-option button (slightly dimmer). Two-space indent required. Behaves the same as a top-level option. |
+| `<!-- comment -->` | Ignored. Use for notes to yourself. |
+
+### How the popup works
+
+1. Tap **History**, **Aggs**, **Ease**, or **24hr Pattern** below any note in the Report view.
+2. The popup appears on the right side of the screen with the hint at the top, quick-fill buttons below, and a text entry box at the bottom.
+3. Tap any quick-fill button to append that text on a new line in the entry box.
+4. Type freely in the entry box at any time.
+5. Press **Shift+Enter** to save the entry and close the popup. The text appears in the report under that note.
+6. Tap the same button again to re-open and edit the entry.
+
+### Adding new fields or sub-menus
+
+Add options under any field heading. Sub-options are shown with slightly different styling but otherwise behave identically to top-level options. Future versions will support nested sub-menus.
+
+Example — extending History with more onset options:
+
+```markdown
+## History
+> Onset, mechanism, duration, previous episodes, relevant medical history.
+- Onset
+  - Gradual — weeks to months
+  - Sudden — seconds to days
+  - Insidious — no clear start
+  - Post-surgical
+- Duration
+  - Acute — < 6 weeks
+  - Sub-acute — 6 weeks – 3 months
+  - Chronic — > 3 months
+```

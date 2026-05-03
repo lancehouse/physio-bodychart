@@ -113,7 +113,7 @@ void session_build_path(AppState *app, const char *suffix, char *buf, size_t len
 static void ensure_save_dir(char *buf, size_t len)
 {
     const char *home = g_get_home_dir();
-    snprintf(buf, len, "%s/PhysioChart", home);
+    snprintf(buf, len, "%s/Physio-Bodychart", home);
     if (mkdir(buf, 0755) != 0 && errno != EEXIST)
         snprintf(buf, len, "%s", home);
 }

@@ -1,6 +1,8 @@
 #include "persistence.h"
 #include "stroke.h"
 #include "window.h"
+#include "obj_chart.h"
+#include "report.h"
 #include <json-c/json.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,7 +15,7 @@
 
 static void ensure_physio_root(char *buf, size_t len)
 {
-    snprintf(buf, len, "%s/PhysioChart", g_get_home_dir());
+    snprintf(buf, len, "%s/Physio-Bodychart", g_get_home_dir());
     if (mkdir(buf, 0755) != 0 && errno != EEXIST) {
         snprintf(buf, len, "%s", g_get_home_dir());
     }
@@ -144,6 +146,45 @@ static json_object *link_matrix_to_json(AppState *app)
     return rows;
 }
 
+static json_object *obj_zones_to_json(AppState *app)
+{
+    json_object *arr = json_object_new_array();
+    for (int i = 0; i < app->obj_zone_count; i++) {
+        const ObjZone *z = app->obj_zones[i];
+        if (!z) continue;
+        json_object *o = json_object_new_object();
+        json_object_object_add(o, "type", json_object_new_int((int)z->type));
+        json_object_object_add(o, "view", json_object_new_int(z->view));
+        json_object *pts = json_object_new_array();
+        for (int j = 0; j < z->n; j++) {
+            json_object *pt = json_object_new_array();
+            json_object_array_add(pt, json_object_new_double(z->bx[j]));
+            json_object_array_add(pt, json_object_new_double(z->by[j]));
+            json_object_array_add(pts, pt);
+        }
+        json_object_object_add(o, "pts", pts);
+        json_object_array_add(arr, o);
+    }
+    return arr;
+}
+
+static json_object *obj_points_to_json(AppState *app)
+{
+    json_object *arr = json_object_new_array();
+    for (int i = 0; i < app->obj_point_count; i++) {
+        const ObjPoint *p = &app->obj_points[i];
+        json_object *o = json_object_new_object();
+        json_object_object_add(o, "type",  json_object_new_int((int)p->type));
+        json_object_object_add(o, "view",  json_object_new_int(p->view));
+        json_object_object_add(o, "bx",    json_object_new_double(p->bx));
+        json_object_object_add(o, "by",    json_object_new_double(p->by));
+        json_object_object_add(o, "value", json_object_new_double(p->value));
+        json_object_object_add(o, "label", json_object_new_string(p->label));
+        json_object_array_add(arr, o);
+    }
+    return arr;
+}
+
 /* ── Save ─────────────────────────────────────────────────────────────────── */
 
 gboolean persistence_save(AppState *app)
@@ -190,13 +231,32 @@ gboolean persistence_save(AppState *app)
         json_object_new_double(app->link_summary_by));
     json_object_object_add(root, "subjective", subj);
 
-    /* Objective / neuro / report — stubs for future phases */
-    json_object_object_add(root, "objective",
-        json_object_new_object());
+    /* Objective chart */
+    json_object *obj = json_object_new_object();
+    json_object_object_add(obj, "zones",  obj_zones_to_json(app));
+    json_object_object_add(obj, "points", obj_points_to_json(app));
+    json_object_object_add(root, "objective", obj);
     json_object_object_add(root, "neuro",
         json_object_new_object());
     json_object *rpt = json_object_new_object();
-    json_object_object_add(rpt, "text", json_object_new_string(""));
+    json_object_object_add(rpt, "assessment",
+        json_object_new_string(app->report.assessment));
+    json_object_object_add(rpt, "plan",
+        json_object_new_string(app->report.plan));
+    json_object_object_add(rpt, "clinical_notes",
+        json_object_new_string(app->report.clinical_notes));
+    {
+        static const char *KEYS[SUBJ_FIELD_COUNT] = {"hist","aggs","ease","24hr"};
+        json_object *ns_arr = json_object_new_array();
+        for (int ni = 0; ni < app->note_count; ni++) {
+            json_object *ns = json_object_new_object();
+            for (int f = 0; f < SUBJ_FIELD_COUNT; f++)
+                json_object_object_add(ns, KEYS[f],
+                    json_object_new_string(app->report.note_subj[ni].fields[f]));
+            json_object_array_add(ns_arr, ns);
+        }
+        json_object_object_add(rpt, "note_subj", ns_arr);
+    }
     json_object_object_add(root, "report", rpt);
 
     /* Write to file */
@@ -255,6 +315,61 @@ static void regen_note_text(NoteAnnotation *n, const char *const *qs)
 }
 
 /* ── Load ─────────────────────────────────────────────────────────────────── */
+
+static void load_obj_data(AppState *app, json_object *obj_j)
+{
+    for (int i = 0; i < app->obj_zone_count; i++) {
+        obj_zone_free(app->obj_zones[i]);
+        app->obj_zones[i] = NULL;
+    }
+    app->obj_zone_count    = 0;
+    app->obj_point_count   = 0;
+    app->obj_undo_type_top = 0;
+
+    json_object *zones_arr;
+    if (json_object_object_get_ex(obj_j, "zones", &zones_arr)) {
+        int n = (int)json_object_array_length(zones_arr);
+        for (int i = 0; i < n && app->obj_zone_count < MAX_OBJ_ZONES; i++) {
+            json_object *o = json_object_array_get_idx(zones_arr, i);
+            int type = ji(o, "type", 0);
+            int view = ji(o, "view", 0);
+            if (type < 0 || type >= OBJ_ZONE_COUNT) continue;
+            ObjZone *z = obj_zone_new((ObjZoneType)type, view);
+            json_object *pts;
+            if (json_object_object_get_ex(o, "pts", &pts)) {
+                int np = (int)json_object_array_length(pts);
+                for (int j = 0; j < np; j++) {
+                    json_object *pt = json_object_array_get_idx(pts, j);
+                    if (json_object_array_length(pt) >= 2) {
+                        float bx = (float)json_object_get_double(
+                                       json_object_array_get_idx(pt, 0));
+                        float by = (float)json_object_get_double(
+                                       json_object_array_get_idx(pt, 1));
+                        obj_zone_add_pt(z, bx, by);
+                    }
+                }
+            }
+            app->obj_zones[app->obj_zone_count++] = z;
+        }
+    }
+
+    json_object *points_arr;
+    if (json_object_object_get_ex(obj_j, "points", &points_arr)) {
+        int n = (int)json_object_array_length(points_arr);
+        for (int i = 0; i < n && app->obj_point_count < MAX_OBJ_POINTS; i++) {
+            json_object *o = json_object_array_get_idx(points_arr, i);
+            int type = ji(o, "type", 0);
+            if (type < 0 || type >= OBJ_POINT_COUNT) continue;
+            ObjPoint *p = &app->obj_points[app->obj_point_count++];
+            p->type  = (ObjPointType)type;
+            p->view  = ji(o, "view",  0);
+            p->bx    = jd(o, "bx",    100.0);
+            p->by    = jd(o, "by",    200.0);
+            p->value = jd(o, "value", 0.0);
+            strncpy(p->label, js(o, "label"), sizeof(p->label) - 1);
+        }
+    }
+}
 
 gboolean persistence_load(AppState *app, const char *path)
 {
@@ -444,7 +559,39 @@ gboolean persistence_load(AppState *app, const char *path)
     app->link_summary_bx     = jd(subj, "link_summary_bx",    12.0);
     app->link_summary_by     = jd(subj, "link_summary_by",   378.0);
 
+    /* Objective chart */
+    json_object *obj_j;
+    if (json_object_object_get_ex(root, "objective", &obj_j))
+        load_obj_data(app, obj_j);
+
+    /* Report */
+    json_object *rpt_j;
+    if (json_object_object_get_ex(root, "report", &rpt_j)) {
+        g_strlcpy(app->report.assessment,
+                  js(rpt_j, "assessment"),   REPORT_SECTION_LEN);
+        g_strlcpy(app->report.plan,
+                  js(rpt_j, "plan"),          REPORT_SECTION_LEN);
+        g_strlcpy(app->report.clinical_notes,
+                  js(rpt_j, "clinical_notes"), REPORT_SECTION_LEN);
+        static const char *KEYS[SUBJ_FIELD_COUNT] = {"hist","aggs","ease","24hr"};
+        json_object *ns_arr;
+        if (json_object_object_get_ex(rpt_j, "note_subj", &ns_arr)) {
+            int nse = (int)json_object_array_length(ns_arr);
+            if (nse > REPORT_MAX_NOTES) nse = REPORT_MAX_NOTES;
+            for (int ni = 0; ni < nse; ni++) {
+                json_object *ns = json_object_array_get_idx(ns_arr, ni);
+                for (int f = 0; f < SUBJ_FIELD_COUNT; f++)
+                    g_strlcpy(app->report.note_subj[ni].fields[f],
+                              js(ns, KEYS[f]), REPORT_NOTE_FIELD_LEN);
+            }
+        }
+    }
+
     json_object_put(root);
+
+    /* Invalidate per-view stroke caches: strokes/arrows changed. */
+    app->stroke_version++;
+
     fprintf(stderr, "persistence_load: %s\n", path);
     return TRUE;
 }

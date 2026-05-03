@@ -10,6 +10,10 @@
 /* ── Per-drawing-area context ────────────────────────────────────────────── *
  * g_col[0..3]  — quad view slots (anterior, posterior, lateral_l, lateral_r) *
  * g_col[4..7]  — matching single-view slots (same order)                    */
+/* Cache surface dimensions in pixels (body space is 200×400 units; 2 px/bu). */
+#define STROKE_CACHE_W 400
+#define STROKE_CACHE_H 800
+
 typedef struct {
     AppState  *app;
     BodyView   view;
@@ -23,6 +27,14 @@ typedef struct {
     GtkWidget *da;
     GtkWidget *zoom_btn;
     GtkWidget *header_label;
+
+    /* Committed-stroke offscreen cache.
+     * Strokes and arrows for cd->view are rendered into this 400×800 image
+     * surface (2 px per body-unit) whenever stroke_version changes.
+     * During on_col_draw the cache is composited at the correct scale/offset
+     * so only the active stroke and arrow preview are re-rendered each frame. */
+    cairo_surface_t *stroke_cache;
+    int              cache_stroke_version;  /* value of app->stroke_version when cache was built */
 } ColData;
 
 static ColData g_col[8];
@@ -380,7 +392,25 @@ static int arrow_head_hit_screen(AppState *app, ColData *cd,
         double ax = (app->arrows[i].x2 - 100.0) * s + acx;
         double ay = (app->arrows[i].y2 - 200.0) * s + acy;
         double dx = sx - ax, dy = sy - ay;
-        if (sqrt(dx*dx + dy*dy) < 14.0) return i;
+        if (sqrt(dx*dx + dy*dy) < 20.0) return i;
+    }
+    return -1;
+}
+
+static int obj_point_hit_screen(AppState *app, ColData *cd, double sx, double sy)
+{
+    double w  = (double)gtk_widget_get_width(cd->da);
+    double h  = (double)gtk_widget_get_height(cd->da);
+    double s  = col_base_scale(w, h) * (*cd->p_zoom);
+    double cx = w / 2.0 + (*cd->p_pan_x);
+    double cy = h / 2.0 + (*cd->p_pan_y);
+    for (int i = app->obj_point_count - 1; i >= 0; i--) {
+        const ObjPoint *p = &app->obj_points[i];
+        if (p->view != (int)cd->view) continue;
+        double px = (p->bx - 100.0) * s + cx;
+        double py = (p->by - 200.0) * s + cy;
+        double dx = sx - px, dy = sy - py;
+        if (dx*dx + dy*dy < 22.0 * 22.0) return i;
     }
     return -1;
 }
@@ -636,6 +666,53 @@ void canvas_render_view(AppState *app, cairo_t *cr, BodyView view,
                                   (app->link_summary_by - 200.0) * s + cy);
 }
 
+/* ── Committed-stroke cache management ────────────────────────────────────── *
+ * rebuild_stroke_cache() renders all committed strokes and arrows for          *
+ * cd->view into cd->stroke_cache (STROKE_CACHE_W × STROKE_CACHE_H pixels,     *
+ * 2 px per body-unit).  The cache is then stamped onto the screen surface in   *
+ * on_col_draw instead of re-iterating the full stroke list every frame.        *
+ *                                                                               *
+ * Cache space: body (0,0) maps to pixel (0,0); body (200,400) → pixel          *
+ * (400,800).  The transform is simply scale(2,2) from body space.              */
+static void rebuild_stroke_cache(ColData *cd)
+{
+    AppState *app = cd->app;
+
+    /* (Re-)create the image surface */
+    if (cd->stroke_cache)
+        cairo_surface_destroy(cd->stroke_cache);
+    cd->stroke_cache = cairo_image_surface_create(
+        CAIRO_FORMAT_ARGB32, STROKE_CACHE_W, STROKE_CACHE_H);
+
+    cairo_t *cr = cairo_create(cd->stroke_cache);
+
+    /* Clear to transparent */
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+    /* Body space: 1 body-unit = 2 pixels */
+    cairo_scale(cr, 2.0, 2.0);
+
+    /* Committed strokes */
+    for (int i = 0; i < app->strokes->n; i++) {
+        Stroke *s = app->strokes->strokes[i];
+        if (s->view != (int)cd->view) continue;
+        draw_stroke(cr, s, &SYMPTOM_DEFS[s->type], app);
+    }
+
+    /* Committed arrows */
+    for (int i = 0; i < app->arrow_count; i++) {
+        if (app->arrows[i].view != (int)cd->view) continue;
+        draw_arrow_body_space(cr, app->arrows[i].x1, app->arrows[i].y1,
+                              app->arrows[i].cx,  app->arrows[i].cy,
+                              app->arrows[i].x2,  app->arrows[i].y2);
+    }
+
+    cairo_destroy(cr);
+    cd->cache_stroke_version = app->stroke_version;
+}
+
 /* ── Draw callback ───────────────────────────────────────────────────────── */
 static void on_col_draw(GtkDrawingArea *da, cairo_t *cr,
                         int width, int height, gpointer user_data)
@@ -673,40 +750,57 @@ static void on_col_draw(GtkDrawingArea *da, cairo_t *cr,
         }
     }
 
-    /* Committed strokes */
-    for (int i = 0; i < app->strokes->n; i++) {
-        Stroke *s = app->strokes->strokes[i];
-        if (s->view != (int)cd->view) continue;
-        draw_stroke(cr, s, &SYMPTOM_DEFS[s->type], app);
-    }
-    /* Active stroke */
-    if (app->active_stroke && app->active_stroke->view == (int)cd->view)
-        draw_stroke(cr, app->active_stroke,
-                    &SYMPTOM_DEFS[app->active_stroke->type], app);
+    if (app->current_mode == APP_MODE_SUBJECTIVE) {
+        /* ── Committed strokes/arrows via offscreen cache ── *
+         * Rebuild the cache if stroke_version changed (or first call).        *
+         * Then blit the cache surface: body (0,0) is at pixel (0,0) of the   *
+         * cache; cache is 2×body-space, so we draw at scale s/2 where         *
+         * s = col_base_scale * zoom.  The col transform is already active.    *
+         *                                                                       *
+         * cairo_set_source_surface takes the surface's (0,0) as the reference *
+         * point in the current coordinate system.  We're in body-space after  *
+         * apply_col_transform, so we scale down by 0.5 to map cache pixels    *
+         * back to body units, then paint.                                      */
+        if (cd->cache_stroke_version != app->stroke_version)
+            rebuild_stroke_cache(cd);
 
-    /* Committed arrows */
-    for (int i = 0; i < app->arrow_count; i++) {
-        if (app->arrows[i].view != (int)cd->view) continue;
-        draw_arrow_body_space(cr, app->arrows[i].x1, app->arrows[i].y1,
-                              app->arrows[i].cx,  app->arrows[i].cy,
-                              app->arrows[i].x2,  app->arrows[i].y2);
-    }
-    /* Arrow preview while drawing */
-    if (app->arrow_drawing && app->arrow_draw_view == (int)cd->view) {
-        double cpx, cpy;
-        arrow_get_cp(app, &cpx, &cpy);
-        draw_arrow_body_space(cr, app->arrow_x1, app->arrow_y1,
-                              cpx, cpy,
-                              app->arrow_x2, app->arrow_y2);
+        if (cd->stroke_cache) {
+            cairo_save(cr);
+            /* Current transform: screen = T(cx,cy) · S(s) · T(-100,-200)
+             * We want cache pixel p to land at body coordinate p/2, which
+             * the existing transform already handles if we scale by 0.5. */
+            cairo_scale(cr, 0.5, 0.5);
+            cairo_set_source_surface(cr, cd->stroke_cache, 0.0, 0.0);
+            cairo_paint(cr);
+            cairo_restore(cr);
+        }
+
+        /* Active stroke (in-progress — rendered fresh every frame) */
+        if (app->active_stroke && app->active_stroke->view == (int)cd->view)
+            draw_stroke(cr, app->active_stroke,
+                        &SYMPTOM_DEFS[app->active_stroke->type], app);
+
+        /* Arrow preview while drawing */
+        if (app->arrow_drawing && app->arrow_draw_view == (int)cd->view) {
+            double cpx, cpy;
+            arrow_get_cp(app, &cpx, &cpy);
+            draw_arrow_body_space(cr, app->arrow_x1, app->arrow_y1,
+                                  cpx, cpy,
+                                  app->arrow_x2, app->arrow_y2);
+        }
+    } else if (app->current_mode == APP_MODE_OBJECTIVE) {
+        obj_chart_render_body(app, cr, (int)cd->view);
+        obj_chart_render_active_body(app, cr, (int)cd->view);
     }
 
     cairo_restore(cr);
 
-    /* Note annotations and link summary rendered in screen space */
-    {
-        double s  = col_base_scale(width, height) * (*cd->p_zoom);
-        double cx = width  / 2.0 + (*cd->p_pan_x);
-        double cy = height / 2.0 + (*cd->p_pan_y);
+    double s  = col_base_scale(width, height) * (*cd->p_zoom);
+    double cx = width  / 2.0 + (*cd->p_pan_x);
+    double cy = height / 2.0 + (*cd->p_pan_y);
+
+    if (app->current_mode == APP_MODE_SUBJECTIVE) {
+        /* Note annotations and link summary in screen space */
         for (int i = 0; i < app->note_count; i++) {
             const NoteAnnotation *na = &app->notes[i];
             if (na->view != (int)cd->view) continue;
@@ -718,7 +812,79 @@ static void on_col_draw(GtkDrawingArea *da, cairo_t *cr,
             draw_link_summary_screen(cr, app,
                                       (app->link_summary_bx - 100.0) * s + cx,
                                       (app->link_summary_by - 200.0) * s + cy);
+    } else if (app->current_mode == APP_MODE_OBJECTIVE) {
+        obj_chart_render_screen(app, cr, (int)cd->view, s, cx, cy);
     }
+}
+
+/* ── Objective chart hit-testing (body-space) ────────────────────────────── */
+static int obj_zone_hit_body(AppState *app, int view, double bx, double by)
+{
+    for (int i = app->obj_zone_count - 1; i >= 0; i--) {
+        ObjZone *z = app->obj_zones[i];
+        if (!z || z->view != view) continue;
+        for (int j = 0; j < z->n; j++) {
+            double dx = z->bx[j] - bx, dy = z->by[j] - by;
+            if (dx*dx + dy*dy < 10.0 * 10.0) return i;
+        }
+    }
+    return -1;
+}
+
+static int obj_point_hit_body(AppState *app, int view, double bx, double by)
+{
+    for (int i = app->obj_point_count - 1; i >= 0; i--) {
+        ObjPoint *p = &app->obj_points[i];
+        if (p->view != view) continue;
+        double dx = p->bx - bx, dy = p->by - by;
+        if (dx*dx + dy*dy < 12.0 * 12.0) return i;
+    }
+    return -1;
+}
+
+static void obj_commit_active_zone(AppState *app, GtkWidget *da)
+{
+    ObjZone *z = app->obj_active_zone;
+    if (!z) return;
+    app->obj_active_zone = NULL;
+    if (z->n >= 3 && app->obj_zone_count < MAX_OBJ_ZONES) {
+        app->obj_zones[app->obj_zone_count++] = z;
+        if (app->obj_undo_type_top < 64)
+            app->obj_undo_type_stack[app->obj_undo_type_top++] = 0;
+    } else {
+        obj_zone_free(z);
+    }
+    if (da) gtk_widget_queue_draw(da);
+}
+
+static gboolean obj_handle_erase(AppState *app, int view,
+                                  double bx, double by, GtkWidget *da)
+{
+    int iz = obj_zone_hit_body(app, view, bx, by);
+    if (iz >= 0) {
+        obj_zone_free(app->obj_zones[iz]);
+        for (int k = iz; k < app->obj_zone_count - 1; k++)
+            app->obj_zones[k] = app->obj_zones[k + 1];
+        app->obj_zone_count--;
+        app->obj_zones[app->obj_zone_count] = NULL;
+        if (app->obj_undo_type_top > 0 &&
+            app->obj_undo_type_stack[app->obj_undo_type_top - 1] == 0)
+            app->obj_undo_type_top--;
+        gtk_widget_queue_draw(da);
+        return TRUE;
+    }
+    int ip = obj_point_hit_body(app, view, bx, by);
+    if (ip >= 0) {
+        for (int k = ip; k < app->obj_point_count - 1; k++)
+            app->obj_points[k] = app->obj_points[k + 1];
+        app->obj_point_count--;
+        if (app->obj_undo_type_top > 0 &&
+            app->obj_undo_type_stack[app->obj_undo_type_top - 1] == 1)
+            app->obj_undo_type_top--;
+        gtk_widget_queue_draw(da);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /* ── Pressure + tilt helper ──────────────────────────────────────────────── *
@@ -774,24 +940,31 @@ static void on_stylus_down(GtkGestureStylus *gs, double x, double y,
         return;
     }
 
-    /* ── Note tool: drag existing annotations or open wizard ── */
-    if (app->tool == TOOL_NOTE) {
+    /* ── Any tool (Sx mode): drag existing notes/link-summary if hit ── */
+    if (app->current_mode == APP_MODE_SUBJECTIVE) {
         double bx, by;
         screen_to_body(cd, x, y, &bx, &by);
         if (link_summary_hit_screen(app, cd, x, y)) {
             app->link_drag_active = TRUE;
             app->link_drag_bx_off = app->link_summary_bx - bx;
             app->link_drag_by_off = app->link_summary_by - by;
-        } else {
-            int hit = note_hit_screen(app, cd, x, y);
-            if (hit >= 0) {
-                app->note_drag_idx  = hit;
-                app->note_drag_bx_off = app->notes[hit].bx - bx;
-                app->note_drag_by_off = app->notes[hit].by - by;
-            } else if (app->show_note_wizard_cb) {
-                app->show_note_wizard_cb(app, (int)cd->view, bx, by);
-            }
+            return;
         }
+        int hit = note_hit_screen(app, cd, x, y);
+        if (hit >= 0) {
+            app->note_drag_idx    = hit;
+            app->note_drag_bx_off = app->notes[hit].bx - bx;
+            app->note_drag_by_off = app->notes[hit].by - by;
+            return;
+        }
+    }
+
+    /* ── Note tool: no existing annotation hit → open wizard ── */
+    if (app->tool == TOOL_NOTE) {
+        double bx, by;
+        screen_to_body(cd, x, y, &bx, &by);
+        if (app->show_note_wizard_cb)
+            app->show_note_wizard_cb(app, (int)cd->view, bx, by);
         return;
     }
 
@@ -805,6 +978,7 @@ static void on_stylus_down(GtkGestureStylus *gs, double x, double y,
             if (app->undo_type_top > 0 &&
                 app->undo_type_stack[app->undo_type_top - 1] == 1)
                 app->undo_type_top--;
+            app->stroke_version++;  /* arrow deleted — invalidate cache */
             gtk_widget_queue_draw(cd->da);
             return;
         }
@@ -828,6 +1002,54 @@ static void on_stylus_down(GtkGestureStylus *gs, double x, double y,
             app->tool = TOOL_ERASE;
     }
 
+    /* ── Objective mode: intercept all drawing/erase here ── */
+    if (app->current_mode == APP_MODE_OBJECTIVE) {
+        double bx, by;
+        screen_to_body(cd, x, y, &bx, &by);
+        app->current_view = cd->view;
+        if (app->tool == TOOL_ERASE) {
+            obj_handle_erase(app, (int)cd->view, bx, by, cd->da);
+            return;
+        }
+        if (app->obj_point_mode) {
+            /* Drag existing point if tapped, otherwise place new */
+            int phit = obj_point_hit_screen(app, cd, x, y);
+            if (phit >= 0) {
+                app->obj_point_drag_idx    = phit;
+                app->obj_point_drag_bx_off = app->obj_points[phit].bx - bx;
+                app->obj_point_drag_by_off = app->obj_points[phit].by - by;
+                return;
+            }
+            if (app->show_ppt_entry_cb)
+                app->show_ppt_entry_cb(app, (int)cd->view, bx, by);
+            return;
+        }
+        if (app->obj_active_zone) {
+            obj_zone_free(app->obj_active_zone);
+            app->obj_active_zone = NULL;
+        }
+        app->obj_active_zone = obj_zone_new(app->obj_zone_type, (int)cd->view);
+        obj_zone_add_pt(app->obj_active_zone, (float)bx, (float)by);
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
+    /* ── Erase tool: also deletes arrow heads on tap ── */
+    if (app->tool == TOOL_ERASE) {
+        int hit = arrow_head_hit_screen(app, cd, x, y);
+        if (hit >= 0) {
+            for (int k = hit; k < app->arrow_count - 1; k++)
+                app->arrows[k] = app->arrows[k + 1];
+            app->arrow_count--;
+            if (app->undo_type_top > 0 &&
+                app->undo_type_stack[app->undo_type_top - 1] == 1)
+                app->undo_type_top--;
+            app->stroke_version++;  /* arrow deleted — invalidate cache */
+            gtk_widget_queue_draw(cd->da);
+            return;
+        }
+    }
+
     double bx, by;
     screen_to_body(cd, x, y, &bx, &by);
     input_begin(app, bx, by, stylus_effective_pressure(gs, app));
@@ -841,21 +1063,33 @@ static void on_stylus_motion(GtkGestureStylus *gs, double x, double y,
     AppState *app = cd->app;
     app->last_stylus_us = g_get_monotonic_time();
 
-    if (app->tool == TOOL_NOTE) {
-        if (app->note_drag_idx >= 0) {
-            double bx, by;
-            screen_to_body(cd, x, y, &bx, &by);
-            app->notes[app->note_drag_idx].bx = bx + app->note_drag_bx_off;
-            app->notes[app->note_drag_idx].by = by + app->note_drag_by_off;
-            gtk_widget_queue_draw(cd->da);
-        } else if (app->link_drag_active) {
-            double bx, by;
-            screen_to_body(cd, x, y, &bx, &by);
-            app->link_summary_bx   = bx + app->link_drag_bx_off;
-            app->link_summary_by   = by + app->link_drag_by_off;
-            app->link_summary_view = (int)cd->view;
-            canvas_invalidate(app);
-        }
+    /* Note/link drag (any tool) */
+    if (app->note_drag_idx >= 0) {
+        double bx, by;
+        screen_to_body(cd, x, y, &bx, &by);
+        app->notes[app->note_drag_idx].bx = bx + app->note_drag_bx_off;
+        app->notes[app->note_drag_idx].by = by + app->note_drag_by_off;
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+    if (app->link_drag_active) {
+        double bx, by;
+        screen_to_body(cd, x, y, &bx, &by);
+        app->link_summary_bx   = bx + app->link_drag_bx_off;
+        app->link_summary_by   = by + app->link_drag_by_off;
+        app->link_summary_view = (int)cd->view;
+        canvas_invalidate(app);
+        return;
+    }
+    if (app->tool == TOOL_NOTE) return;
+
+    /* Obj point drag */
+    if (app->obj_point_drag_idx >= 0) {
+        double bx, by;
+        screen_to_body(cd, x, y, &bx, &by);
+        app->obj_points[app->obj_point_drag_idx].bx = bx + app->obj_point_drag_bx_off;
+        app->obj_points[app->obj_point_drag_idx].by = by + app->obj_point_drag_by_off;
+        gtk_widget_queue_draw(cd->da);
         return;
     }
 
@@ -865,6 +1099,14 @@ static void on_stylus_motion(GtkGestureStylus *gs, double x, double y,
         app->arrow_x2 = bx;
         app->arrow_y2 = by;
         arrow_track_add(app, bx, by);
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
+    if (app->current_mode == APP_MODE_OBJECTIVE && app->obj_active_zone) {
+        double bx, by;
+        screen_to_body(cd, x, y, &bx, &by);
+        obj_zone_add_pt(app->obj_active_zone, (float)bx, (float)by);
         gtk_widget_queue_draw(cd->da);
         return;
     }
@@ -883,9 +1125,21 @@ static void on_stylus_up(GtkGestureStylus *gs, double x, double y,
     (void)gs; (void)x; (void)y;
     app->last_stylus_us = g_get_monotonic_time();
 
-    if (app->tool == TOOL_NOTE) {
+    /* Clear note/link drag (any tool) */
+    if (app->note_drag_idx >= 0 || app->link_drag_active) {
         app->note_drag_idx    = -1;
         app->link_drag_active = FALSE;
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+    if (app->tool == TOOL_NOTE) {
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
+    /* Clear obj point drag */
+    if (app->obj_point_drag_idx >= 0) {
+        app->obj_point_drag_idx = -1;
         gtk_widget_queue_draw(cd->da);
         return;
     }
@@ -908,10 +1162,16 @@ static void on_stylus_up(GtkGestureStylus *gs, double x, double y,
             if (app->undo_type_top < 64)
                 app->undo_type_stack[app->undo_type_top++] = 1;
             app->arrow_count++;
+            app->stroke_version++;  /* arrow committed — invalidate cache */
         }
         app->arrow_drawing = FALSE;
         app->arrow_track_n = 0;
         gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
+    if (app->current_mode == APP_MODE_OBJECTIVE) {
+        obj_commit_active_zone(app, cd->da);
         return;
     }
 
@@ -926,36 +1186,43 @@ static void on_drag_begin(GtkGestureDrag *gd, double x, double y, gpointer d)
     AppState *app = cd->app;
     (void)gd;
 
-    /* Note tool: drag existing annotation or open wizard */
+    /* Any tool (Sx mode): drag existing note/link-summary if hit */
+    if (app->current_mode == APP_MODE_SUBJECTIVE) {
+        double bx_hit, by_hit;
+        screen_to_body(cd, x, y, &bx_hit, &by_hit);
+        if (link_summary_hit_screen(app, cd, x, y)) {
+            app->link_drag_active = TRUE;
+            app->link_drag_bx_off = app->link_summary_bx - bx_hit;
+            app->link_drag_by_off = app->link_summary_by - by_hit;
+            return;
+        }
+        int hit = note_hit_screen(app, cd, x, y);
+        if (hit >= 0) {
+            app->note_drag_idx    = hit;
+            app->note_drag_bx_off = app->notes[hit].bx - bx_hit;
+            app->note_drag_by_off = app->notes[hit].by - by_hit;
+            return;
+        }
+    }
+
+    /* Note tool (no existing hit): open wizard via palm-rejection rules */
     if (app->tool == TOOL_NOTE) {
         double bx, by;
         screen_to_body(cd, x, y, &bx, &by);
-        if (link_summary_hit_screen(app, cd, x, y)) {
-            app->link_drag_active = TRUE;
-            app->link_drag_bx_off = app->link_summary_bx - bx;
-            app->link_drag_by_off = app->link_summary_by - by;
-        } else {
-            int hit = note_hit_screen(app, cd, x, y);
-            if (hit >= 0) {
-                app->note_drag_idx    = hit;
-                app->note_drag_bx_off = app->notes[hit].bx - bx;
-                app->note_drag_by_off = app->notes[hit].by - by;
-            } else if (app->show_note_wizard_cb) {
-                /* Palm rejection for new note placement */
-                if (app->pen_palm_reject) {
-                    gint64 age_us = g_get_monotonic_time() - app->last_stylus_us;
-                    if (age_us >= 500000)
-                        app->show_note_wizard_cb(app, (int)cd->view, bx, by);
-                } else {
+        if (app->show_note_wizard_cb) {
+            if (app->pen_palm_reject) {
+                gint64 age_us = g_get_monotonic_time() - app->last_stylus_us;
+                if (age_us >= 500000)
                     app->show_note_wizard_cb(app, (int)cd->view, bx, by);
-                }
+            } else {
+                app->show_note_wizard_cb(app, (int)cd->view, bx, by);
             }
         }
         return;
     }
 
     /* Arrow head deletion — allowed even during palm-rejection window */
-    if (app->tool == TOOL_ARROW) {
+    if (app->tool == TOOL_ARROW || app->tool == TOOL_ERASE) {
         int hit = arrow_head_hit_screen(app, cd, x, y);
         if (hit >= 0) {
             for (int k = hit; k < app->arrow_count - 1; k++)
@@ -964,6 +1231,7 @@ static void on_drag_begin(GtkGestureDrag *gd, double x, double y, gpointer d)
             if (app->undo_type_top > 0 &&
                 app->undo_type_stack[app->undo_type_top - 1] == 1)
                 app->undo_type_top--;
+            app->stroke_version++;  /* arrow deleted — invalidate cache */
             gtk_widget_queue_draw(cd->da);
             return;
         }
@@ -991,6 +1259,33 @@ static void on_drag_begin(GtkGestureDrag *gd, double x, double y, gpointer d)
         return;
     }
 
+    if (app->current_mode == APP_MODE_OBJECTIVE) {
+        if (app->tool == TOOL_ERASE) {
+            obj_handle_erase(app, (int)cd->view, bx, by, cd->da);
+            return;
+        }
+        if (app->obj_point_mode) {
+            int phit = obj_point_hit_screen(app, cd, x, y);
+            if (phit >= 0) {
+                app->obj_point_drag_idx    = phit;
+                app->obj_point_drag_bx_off = app->obj_points[phit].bx - bx;
+                app->obj_point_drag_by_off = app->obj_points[phit].by - by;
+                return;
+            }
+            if (app->show_ppt_entry_cb)
+                app->show_ppt_entry_cb(app, (int)cd->view, bx, by);
+            return;
+        }
+        if (app->obj_active_zone) {
+            obj_zone_free(app->obj_active_zone);
+            app->obj_active_zone = NULL;
+        }
+        app->obj_active_zone = obj_zone_new(app->obj_zone_type, (int)cd->view);
+        obj_zone_add_pt(app->obj_active_zone, (float)bx, (float)by);
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
     input_begin(app, bx, by, 0.6);
     gtk_widget_queue_draw(cd->da);
 }
@@ -1005,17 +1300,27 @@ static void on_drag_update(GtkGestureDrag *gd, double dx, double dy,
     double bx, by;
     screen_to_body(cd, sx + dx, sy + dy, &bx, &by);
 
-    if (app->tool == TOOL_NOTE) {
-        if (app->note_drag_idx >= 0) {
-            app->notes[app->note_drag_idx].bx = bx + app->note_drag_bx_off;
-            app->notes[app->note_drag_idx].by = by + app->note_drag_by_off;
-            gtk_widget_queue_draw(cd->da);
-        } else if (app->link_drag_active) {
-            app->link_summary_bx   = bx + app->link_drag_bx_off;
-            app->link_summary_by   = by + app->link_drag_by_off;
-            app->link_summary_view = (int)cd->view;
-            canvas_invalidate(app);
-        }
+    /* Note/link drag (any tool) */
+    if (app->note_drag_idx >= 0) {
+        app->notes[app->note_drag_idx].bx = bx + app->note_drag_bx_off;
+        app->notes[app->note_drag_idx].by = by + app->note_drag_by_off;
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+    if (app->link_drag_active) {
+        app->link_summary_bx   = bx + app->link_drag_bx_off;
+        app->link_summary_by   = by + app->link_drag_by_off;
+        app->link_summary_view = (int)cd->view;
+        canvas_invalidate(app);
+        return;
+    }
+    if (app->tool == TOOL_NOTE) return;
+
+    /* Obj point drag */
+    if (app->obj_point_drag_idx >= 0) {
+        app->obj_points[app->obj_point_drag_idx].bx = bx + app->obj_point_drag_bx_off;
+        app->obj_points[app->obj_point_drag_idx].by = by + app->obj_point_drag_by_off;
+        gtk_widget_queue_draw(cd->da);
         return;
     }
 
@@ -1023,6 +1328,12 @@ static void on_drag_update(GtkGestureDrag *gd, double dx, double dy,
         app->arrow_x2 = bx;
         app->arrow_y2 = by;
         arrow_track_add(app, bx, by);
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
+    if (app->current_mode == APP_MODE_OBJECTIVE && app->obj_active_zone) {
+        obj_zone_add_pt(app->obj_active_zone, (float)bx, (float)by);
         gtk_widget_queue_draw(cd->da);
         return;
     }
@@ -1036,9 +1347,21 @@ static void on_drag_end(GtkGestureDrag *gd, double dx, double dy, gpointer d)
     ColData  *cd  = d;
     AppState *app = cd->app;
 
-    if (app->tool == TOOL_NOTE) {
+    /* Clear note/link drag (any tool) */
+    if (app->note_drag_idx >= 0 || app->link_drag_active) {
         app->note_drag_idx    = -1;
         app->link_drag_active = FALSE;
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+    if (app->tool == TOOL_NOTE) {
+        gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
+    /* Clear obj point drag */
+    if (app->obj_point_drag_idx >= 0) {
+        app->obj_point_drag_idx = -1;
         gtk_widget_queue_draw(cd->da);
         return;
     }
@@ -1063,10 +1386,16 @@ static void on_drag_end(GtkGestureDrag *gd, double dx, double dy, gpointer d)
             if (app->undo_type_top < 64)
                 app->undo_type_stack[app->undo_type_top++] = 1;
             app->arrow_count++;
+            app->stroke_version++;  /* arrow committed — invalidate cache */
         }
         app->arrow_drawing = FALSE;
         app->arrow_track_n = 0;
         gtk_widget_queue_draw(cd->da);
+        return;
+    }
+
+    if (app->current_mode == APP_MODE_OBJECTIVE) {
+        obj_commit_active_zone(app, cd->da);
         return;
     }
 
@@ -1096,6 +1425,9 @@ static void on_zoom_begin(GtkGestureZoom *gz, GdkEventSequence *seq,
     gtk_gesture_get_bounding_box_center(GTK_GESTURE(gz),
                                          &cd->last_cx, &cd->last_cy);
     input_cancel(cd->app);
+    cd->app->note_drag_idx      = -1;
+    cd->app->link_drag_active   = FALSE;
+    cd->app->obj_point_drag_idx = -1;
     gtk_widget_queue_draw(cd->da);
 }
 
@@ -1328,8 +1660,9 @@ static GtkWidget *make_drawing_area(AppState *app, ColData *cd,
 
 GtkWidget *canvas_new(AppState *app)
 {
-    app->note_drag_idx    = -1;
-    app->link_drag_active = FALSE;
+    app->note_drag_idx        = -1;
+    app->link_drag_active     = FALSE;
+    app->obj_point_drag_idx   = -1;
 
     /* Initialise right slot views (can be overridden by settings before canvas_new) */
     if (app->right_slot_views[0] == 0 && app->right_slot_views[1] == 0) {
@@ -1345,7 +1678,14 @@ GtkWidget *canvas_new(AppState *app)
         app->col_da[i]      = app->single_da[i]       = NULL;
     }
 
-    /* Initialise ColData for quad slots (0-3) and single slots (4-7) */
+    /* Initialise ColData for quad slots (0-3) and single slots (4-7).
+     * Free any existing cache surfaces in case canvas_new is called again. */
+    for (int i = 0; i < 8; i++) {
+        if (g_col[i].stroke_cache) {
+            cairo_surface_destroy(g_col[i].stroke_cache);
+            g_col[i].stroke_cache = NULL;
+        }
+    }
     for (int i = 0; i < 4; i++) {
         /* Quad right slots (2,3) use cyclable views; left slots and all singles are fixed */
         BodyView qview = (i < 2) ? SINGLE_SLOT_VIEWS[i] : app->right_slot_views[i - 2];
@@ -1353,12 +1693,16 @@ GtkWidget *canvas_new(AppState *app)
                                  .p_zoom  = &app->col_zoom[i],
                                  .p_pan_x = &app->col_pan_x[i],
                                  .p_pan_y = &app->col_pan_y[i],
-                                 .last_zoom_scale = 1.0 };
+                                 .last_zoom_scale = 1.0,
+                                 .stroke_cache = NULL,
+                                 .cache_stroke_version = -1 };
         g_col[4+i] = (ColData){ .app = app, .view = SINGLE_SLOT_VIEWS[i],
                                  .p_zoom  = &app->single_zoom[i],
                                  .p_pan_x = &app->single_pan_x[i],
                                  .p_pan_y = &app->single_pan_y[i],
-                                 .last_zoom_scale = 1.0 };
+                                 .last_zoom_scale = 1.0,
+                                 .stroke_cache = NULL,
+                                 .cache_stroke_version = -1 };
     }
 
     /* GtkStack: one page per layout mode */
@@ -1459,11 +1803,40 @@ void canvas_clear(AppState *app)
     app->arrow_count         = 0;
     app->arrow_drawing       = FALSE;
     app->undo_type_top       = 0;
+    app->stroke_version++;
+
+    for (int i = 0; i < app->obj_zone_count; i++) {
+        obj_zone_free(app->obj_zones[i]);
+        app->obj_zones[i] = NULL;
+    }
+    app->obj_zone_count = 0;
+    app->obj_point_count = 0;
+    app->obj_undo_type_top = 0;
+    if (app->obj_active_zone) {
+        obj_zone_free(app->obj_active_zone);
+        app->obj_active_zone = NULL;
+    }
+
     canvas_invalidate(app);
 }
 
 void canvas_undo(AppState *app)
 {
+    if (app->current_mode == APP_MODE_OBJECTIVE) {
+        if (app->obj_undo_type_top > 0) {
+            guint8 type = app->obj_undo_type_stack[--app->obj_undo_type_top];
+            if (type == 1) {
+                if (app->obj_point_count > 0) app->obj_point_count--;
+            } else {
+                if (app->obj_zone_count > 0) {
+                    obj_zone_free(app->obj_zones[--app->obj_zone_count]);
+                    app->obj_zones[app->obj_zone_count] = NULL;
+                }
+            }
+        }
+        canvas_invalidate(app);
+        return;
+    }
     if (app->undo_type_top > 0) {
         guint8 type = app->undo_type_stack[--app->undo_type_top];
         if (type == 1) {
@@ -1474,6 +1847,7 @@ void canvas_undo(AppState *app)
     } else {
         stroke_free(stroke_list_pop(app->strokes));
     }
+    app->stroke_version++;
     canvas_invalidate(app);
 }
 
