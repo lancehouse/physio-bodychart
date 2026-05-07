@@ -18,6 +18,12 @@ void session_auto_path(char *buf, size_t len, const char *ext);
  * Uses a fixed export zoom (0.92) so edge content is never clipped. */
 gboolean session_export_subj_png(AppState *app);
 
+/* Render the objective chart to a PNG at the session path. */
+gboolean session_export_obj_png(AppState *app);
+
+/* Render both subjective (top) and objective (bottom) in one image with labels. */
+gboolean session_export_combined_png(AppState *app);
+
 /* Render to an arbitrary path (for legacy keyboard shortcut exports). */
 gboolean session_export_png(AppState *app, const char *path);
 gboolean session_export_pdf(AppState *app, const char *path);

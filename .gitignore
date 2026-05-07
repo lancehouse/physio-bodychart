@@ -1,11 +1,37 @@
-# Meson build directory
+# Build artifacts
+physio-bodychart/build/
+physio-bodychart/subprojects/
+physio-assessment/.venv/
+physio-assessment/.python-version
+
+# Python
+physio_assessment/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
 build/
+.pytest_cache/
+.coverage
 
-# Claude Code local settings
-.claude/
-
-# Editor / IDE
+# IDE
 .vscode/
+.idea/
 *.swp
+*.swo
 *~
 .DS_Store
+
+# CMake/Meson
+compile_commands.json
+.ninja_deps
+.ninja_log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Session/runtime data
+*.db
+*.json.tmp
+*.log

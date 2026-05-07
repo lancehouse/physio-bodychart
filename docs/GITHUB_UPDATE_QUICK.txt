@@ -1,0 +1,196 @@
+═══════════════════════════════════════════════════════════════════════════════
+                    QUICK GITHUB PUSH INSTRUCTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+👉 SHORT VERSION (Copy & Paste These Commands)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Check what you've changed
+  git status
+
+  # Stage everything you changed
+  git add .
+
+  # Create commit with good message
+  git commit -m "Phase 1.11: Session JSON file watcher and GTK↔Python sync"
+
+  # Push to GitHub
+  git push origin main
+
+  # (or if you have a feature branch)
+  git push origin phase-1.11
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ STEP BY STEP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. BEFORE PUSHING — Verify Everything Works
+   ───────────────────────────────────────────────────────────────────────
+
+   cd /home/lance/Projects/physio-bodychart
+
+   # Check what's changed
+   git status
+
+   # You should see:
+   #   modified:   physio-bodychart/src/persistence.c
+   #   modified:   physio-bodychart/src/canvas.h
+   #   modified:   physio-bodychart/src/report.h
+   #   modified:   physio-bodychart/src/window.c
+   #   new file:   physio_assessment/watcher.py
+   #   new file:   physio_assessment/storage.py
+   #   new file:   physio_assessment/tui.py
+   #   new file:   SESSION_SUMMARY_20260508.md
+   #   (and other docs)
+
+   # Verify GTK still builds
+   ninja -C physio-bodychart/build
+
+   # Verify Python still compiles
+   cd physio_assessment && python3 -m py_compile watcher.py storage.py tui.py
+   cd ..
+
+2. STAGE YOUR CHANGES
+   ───────────────────────────────────────────────────────────────────────
+
+   # Add all files
+   git add -A
+
+   # Verify what will be committed
+   git status
+
+3. CREATE COMMIT
+   ───────────────────────────────────────────────────────────────────────
+
+   git commit -m "Phase 1.11: Session JSON file watcher and GTK↔Python sync
+
+Implements bidirectional file synchronization between GTK body chart and
+Python TUI via shared session JSON files.
+
+GTK Changes:
+- File watcher with debouncing (ignores own writes)
+- Assessment block reload (preserves drawing data)
+- New ReportData fields for narrative content
+
+Python Changes:
+- watcher.py: 1-second polling file monitor
+- storage.py: Atomic JSON read/write for assessment
+- tui.py: Textual TUI with watcher integration
+
+Schema Changes:
+- session_current.json: Version 2, add session_file field
+- Full session JSON: New assessment block (Python-owned)
+
+Status: Compiles cleanly, ready for live testing."
+
+4. PUSH TO GITHUB
+   ───────────────────────────────────────────────────────────────────────
+
+   git push origin main
+
+   # Or if using a feature branch:
+   git push origin phase-1.11
+
+5. VERIFY ON GITHUB
+   ───────────────────────────────────────────────────────────────────────
+
+   # Open GitHub in browser
+   https://github.com/yourusername/physio-bodychart
+
+   # You should see:
+   - New commit at top of main
+   - 7 files changed (4 modified, 3 new)
+   - ~500 lines added
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  IF SOMETHING GOES WRONG
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Forgot to stage something?
+  git add src/file.c
+  git commit --amend --no-edit
+
+Need to revert your last commit?
+  git reset --soft HEAD~1
+  # (Your changes are still there, just unstaged. Add different things and recommit)
+
+Completely messed up?
+  git log --oneline     # See your history
+  git reset --hard HEAD~1  # Undo last commit (CAREFUL — you lose changes)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📝 COMMIT MESSAGE TEMPLATE (if you want to be detailed)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Use this if you want a more professional commit message:
+
+git commit -m "Phase 1.11: Session JSON file watcher and GTK↔Python sync
+
+Implements bidirectional file synchronization between GTK body chart (C) and
+Python Textual TUI via shared session JSON files using 1-second polling.
+
+GTK Changes:
+- persistence.c: Add file watcher (GFileMonitor) with debouncing
+- persistence.c: Add persistence_reload_assessment() for targeted reload
+- persistence.c: Update persistence_write_session_current() with session_file
+- canvas.h: Add session_file_monitor and last_own_save_us to AppState
+- report.h: Add history, agg_factors, ease_factors, behaviour_24hr fields
+- window.c: Wire monitor lifecycle at session open/close
+
+Python Changes (NEW):
+- watcher.py: BodyChartWatcher class with async polling (87 lines)
+- storage.py: Atomic load/save functions for assessment block (67 lines)
+- tui.py: Textual TUI integration with watcher callbacks (217 lines)
+
+Schema Changes:
+- session_current.json: Version 2, add session_file and session_label
+- Full session JSON: New 'assessment' block (Python-owned narrative fields)
+
+Safety:
+- Debouncing prevents feedback loops (app ignores own writes within 2s)
+- Atomic writes prevent corruption (temp file + rename pattern)
+- Clean ownership (no overlapping writes to same JSON block)
+- 1-second polling latency acceptable for clinical workflow
+
+Status:
+✅ Code compiles cleanly (GTK + Python)
+✅ No syntax errors or warnings
+✅ Ready for live testing before Phase 2
+
+See SESSION_SUMMARY_20260508.md and ARCHITECTURE_20260508.md for details."
+
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ AFTER YOU PUSH — VERIFY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Check GitHub shows your commit
+
+2. Get your commit SHA:
+   git log -1 --oneline
+   # You'll see something like: a7f3b9c Phase 1.11: Session JSON file watcher
+
+3. Verify build works on clean clone:
+   cd /tmp
+   git clone https://github.com/yourusername/physio-bodychart
+   cd physio-bodychart/physio-bodychart
+   ninja -C build  # Should build cleanly
+
+4. Share the commit SHA with Claude Chat for final verification:
+   "I've pushed Phase 1.11. Commit: a7f3b9c. Code compiles cleanly."
+
+═══════════════════════════════════════════════════════════════════════════════
+
+🎯 YOU'RE DONE WHEN:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Code is committed and pushed to GitHub
+✅ GitHub shows the new files (watcher.py, storage.py, tui.py)
+✅ All 7 files show as changed in commit diff
+✅ Build works on clean clone
+✅ You have the commit SHA ready for Claude Chat review
+
+═══════════════════════════════════════════════════════════════════════════════

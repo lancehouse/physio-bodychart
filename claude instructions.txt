@@ -1,0 +1,624 @@
+# PhysioChart — Complete Project Briefing v2
+# Paste this while cd'd into the directory containing
+# physio-bodychart/ and physio-assessment/
+Read EVERY file in both directories before writing 
+a single line of code.
+
+═══════════════════════════════════════════════════════
+## WHAT THIS PROJECT IS
+═══════════════════════════════════════════════════════
+
+A specialist physiotherapy clinical tool for a Lenovo Yoga 
+running Fedora 43 in tablet mode. Primary input in bodychart mode is 
+pressure-sensitive stylus and touchscreen. Mouse and keyboard 
+are secondary. Primary mode in report is keyboard, but it must accept mouse and touchscreen input 100% as well.
+Runs on GNOME, with Ptyxis as the terminal.
+
+This is NOT a generic form filler. It is a specialist pain 
+assessment system combining:
+- Pressure-sensitive body chart drawing with clinical overlays
+- A structured specialist assessment with embedded clinical 
+  reasoning (Smart et al, ICD-11, biopsychosocial model)
+- A context-driven clinical knowledge base that surfaces 
+  relevant patterns, checklists and special tests based on 
+  what has been drawn and entered
+- A live report generator that assembles specialist-grade 
+  documentation from structured inputs
+
+The project has two app components and two databases.
+All four must be understood before touching anything.
+
+═══════════════════════════════════════════════════════
+## ENVIRONMENT SETUP — DO THIS FIRST
+═══════════════════════════════════════════════════════
+
+Fedora 43 ships Python 3.13 by default. Textual requires 
+Python 3.12 for stable operation. Set up explicitly:
+
+  sudo dnf install python3.12 python3.12-pip
+  cd physio-assessment
+  python3.12 -m venv .venv
+  source .venv/bin/activate
+  pip install textual jinja2 pydantic
+
+Add a .python-version file containing "3.12" to the 
+physio-assessment repo root.
+Never use the system Python for this project.
+
+═══════════════════════════════════════════════════════
+## ARCHITECTURE OVERVIEW
+═══════════════════════════════════════════════════════
+
+Two apps. Two databases. One shared session JSON file.
+
+  physio-bodychart/          GTK4/C
+    Stylus body chart app
+    Writes → session_current.json
+
+  physio-assessment/         Python 3.12 / Textual
+    Assessment + report TUI
+    Reads ← session_current.json
+    Reads/writes → sessions.db (patient data)
+    Reads → clinical_kb.db (reference data)
+
+Shared session file location:
+  ~/.local/share/physio-bodychart/session_current.json
+
+Session databases:
+  ~/.local/share/physio-assessment/sessions.db
+  ~/.local/share/physio-assessment/clinical_kb.db
+
+The two apps are INDEPENDENT. Changes to one do not 
+require changes to the other UNLESS the shared JSON 
+schema changes. Schema changes require a version bump 
+and migration in both apps.
+
+═══════════════════════════════════════════════════════
+## THREE-LAYER ARCHITECTURE — physio-assessment/
+═══════════════════════════════════════════════════════
+
+This is mandatory. Do not mix layers. Ever.
+
+LAYER 1 — models.py (data only)
+  Pure state. Pydantic models.
+  No UI imports. No logic. No decisions.
+  Patient, Session, Barrier, OutcomeMeasure,
+  ClinicalPattern, SpecialTestResult, etc.
+  All models use: model_config = ConfigDict(extra='ignore')
+  This tolerant reader means new body chart JSON fields 
+  never crash the assessment app.
+
+LAYER 2 — logic.py (clinical rules only)
+  Pure clinical logic. No Textual imports. No UI.
+  Reusable outside the UI entirely.
+  Contains:
+    generate_report_paragraph(section, session_data)
+    query_patterns(region, symptom_zones, active_overlay)
+    query_tests(pattern_ids)
+    score_pattern(pattern_id, features_present)
+    suggest_icd11_pathway(duration, mechanism, pain_type)
+    suggest_barriers(outcome_scores, pain_type)
+    calculate_bmi(height, weight)
+    tally_inflammatory_score(features_checked)
+    tally_pain_type_features(features_checked)
+    interpret_outcome_score(measure_name, score)
+
+LAYER 3 — UI (Textual screens and widgets only)
+  Displays state. Captures input. Calls logic layer.
+  Never owns clinical logic. Never writes directly to DB.
+  Syncs model ↔ UI only.
+  Calls storage layer for all persistence.
+
+LAYER 4 — storage.py (persistence only)
+  Reads and writes SQLite. No UI. No clinical logic.
+  Auto-saves on every field change — no save button.
+  Behaves like Obsidian: state always persisted.
+
+═══════════════════════════════════════════════════════
+## COMPONENT 1 — physio-bodychart/ (GTK4/C)
+═══════════════════════════════════════════════════════
+
+Read all source files first. Understand current state 
+before touching anything.
+
+### KEEP — do not touch:
+- Pressure-sensitive stylus drawing engine
+- Body outlines (all 8 views: anterior, posterior, 
+  lateral R and L, hand palmar, hand dorsal, 
+  foot plantar, foot dorsal)
+- Symptom type toolbar (colour + pattern per type:
+  pain constant, pain intermittent, paraesthesia, 
+  anaesthesia, deep ache)
+- Clinical overlay system (dermatomes, peripheral 
+  nerves, somatic referral) with opacity + cycling
+- 4-view quad mode
+- Undo / clear
+- Any notes fields or free text in body chart panels
+- Any PPT / pain provocation testing section
+- Any other clinical data capture already present
+
+### REMOVE — only these:
+Structured report builder components, report preview 
+panels, report export functionality.
+Do NOT remove clinical data capture of any kind.
+If unsure whether something is report or data capture: 
+leave it, flag it, ask before removing.
+
+### UI changes to make:
+1. Remove titlebar completely:
+   gtk_window_set_decorated(GTK_WINDOW(app->window), FALSE)
+
+2. Maximise on launch:
+   gtk_window_maximize(GTK_WINDOW(app->window))
+
+3. Add GtkWindowHandle (8px, transparent) at top of 
+   left sidebar as drag handle for window movement
+
+4. Wrap sidebar in GtkRevealer for collapse/expand:
+   - Single tap chevron at sidebar bottom toggles
+   - GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT
+   - Collapsed = icon only or fully hidden
+   - Gives 100% canvas for drawing when collapsed
+
+5. Verify no padding/margins consuming vertical space 
+   in main layout — canvas must fill all remaining space
+
+### New responsibility — session JSON writer:
+Write current state to:
+  ~/.local/share/physio-bodychart/session_current.json
+
+Format:
+{
+  "schema_version": 1,
+  "session_id": "uuid",
+  "date": "ISO8601",
+  "patient_preferred_name": "",
+  "region": ["lumbar"],
+  "body_chart": {
+    "strokes": [],
+    "symptom_types_used": [],
+    "active_overlay": null,
+    "overlay_category": null,
+    "overlay_index": null,
+    "views_drawn": []
+  }
+}
+
+Write on every significant change (stroke committed, 
+overlay changed, region changed).
+Create directory if it doesn't exist.
+Do not over-engineer — clean write of what app knows.
+
+═══════════════════════════════════════════════════════
+## COMPONENT 2 — physio-assessment/ (Python/Textual)
+═══════════════════════════════════════════════════════
+
+Read physio-assessment/README.md first — it is the 
+full specification and is authoritative.
+
+Then read all schema files:
+  core/01_consent_setup.md
+  core/02_subjective.md
+  core/03_medical_screening.md
+  core/04_pain_classification.md
+  core/05_outcome_measures.md
+  core/06_diagnosis_goals.md
+  core/07_barriers_treatment.md
+  regions/lumbar_physical_examination.md
+
+### Three-panel Textual TUI layout:
+
+  LEFT PANEL   — Data entry
+                 Forms, checkboxes, scored tables
+                 Sections navigable by tap or keyboard
+                 Current section highlighted
+
+  CENTRE PANEL — Report preview
+                 Live Jinja2 template output
+                 Updates in real time as fields complete
+                 Exportable as plain text and markdown
+
+  RIGHT PANEL  — Clinical hints + knowledge base
+                 Context-sensitive — changes based on 
+                 current section AND body chart data
+                 Collapsible sections within panel
+                 Shows: criteria text, special tests,
+                 clinical patterns, how-to instructions,
+                 references, scripted prompts
+
+Panels are resizable by drag.
+All interactions work with touch, mouse, and keyboard.
+Keyboard navigation between panels and between fields 
+is mandatory.
+
+### Markup conventions (from README.md):
+  Field::              → text input widget
+  [ ]                  → checkbox / toggle
+  <!-- ui-hint: -->    → implement this UI behaviour
+  <!-- report-template: --> → Jinja2 paragraph template
+  <!-- reference: -->  → citation in right panel
+  <!-- prompt: -->     → collapsible scripted reminder
+  <!-- trigger: -->    → conditional logic
+  Tables               → interactive data entry tables
+
+### Alert system — implement exactly:
+- Red flag checkbox ticked → mandatory acknowledgement 
+  popup, cannot proceed without confirming
+- Cauda equina or cord compression positive → URGENT 
+  styled alert, requires "action taken" field entry 
+  before dismissal
+- CSI ≥ 40 → "Suggestive of central sensitisation"
+- PCL-5 ≥ 33 → "PTSD likely — document action taken"
+- ISI ≥ 10 → "Clinically significant insomnia"
+- PCS total ≥ 30 → "High catastrophising — consider 
+  psychology referral"
+- DASS-21 severe or extremely severe on any subscale 
+  → alert with psychiatry referral prompt
+
+### Auto-calculations:
+- BMI from height + weight (display only, not editable)
+- Inflammatory pain score tally (0–4, auto-count)
+- Pain type feature tallies (subjective + examination 
+  counted separately)
+- Outcome measure score → interpretation label inline
+
+### Barriers checklist → auto-table:
+Ticking a barrier auto-populates output table row with 
+pre-written strategy text from core/07.
+Rows rankable by priority (drag or keyboard up/down).
+Custom free-text barriers addable at bottom.
+
+### ICD-11 auto-suggestion:
+Suggest most likely pathway based on:
+  duration entered + mechanism entered + pain type 
+  already classified
+Show suggestion with one-line reasoning.
+Clinician confirms or overrides.
+Never force — suggestion only.
+
+### Report generation:
+Each <!-- report-template: --> = one Jinja2 paragraph.
+[Preferred name] → replaced with name throughout.
+[placeholders] → replaced with entered values.
+Centre panel live-updates as fields are completed.
+Export: plain text and markdown.
+
+### Clinical pattern templates (Phase 2 feature):
+Pre-built templates that auto-populate common 
+presentations. Built in logic.py only — no UI logic.
+Examples:
+  Classic L4/5 disc pattern
+  Nociplastic / central sensitisation pattern
+  SIJ dysfunction pattern
+  Shoulder impingement pattern (when shoulder added)
+Each pre-ticks relevant checkboxes and suggests 
+dominant pain type. Always editable. Never a conclusion.
+
+### Optional Ollama integration (Phase 3 feature):
+Check for Ollama at localhost:11434 on startup.
+If available: show "Draft clinical impression" button 
+in ICD-11 / clinical impression section only.
+On press: send completed session JSON as context to 
+llama3.2:3b with strict grounding prompt.
+Strict prompt must include: "Only use information 
+present in this JSON. Do not infer or add any clinical 
+detail not explicitly provided."
+Display response in editable field — never auto-accept.
+Graceful fallback if Ollama not running: show empty 
+editable field only.
+Install when ready:
+  sudo dnf install ollama
+  ollama pull llama3.2:3b
+
+═══════════════════════════════════════════════════════
+## DATABASE 1 — sessions.db (patient data)
+═══════════════════════════════════════════════════════
+
+Location: ~/.local/share/physio-assessment/sessions.db
+Patient data. Private. Never shared.
+
+Multi-patient from day one. Do not build single-patient.
+
+Tables:
+
+Patient
+  id (uuid), preferred_name, date_of_birth (nullable),
+  created_at, updated_at
+
+Session
+  id (uuid), patient_id (fk), schema_version (int),
+  date (ISO8601), region (json array),
+  status (in_progress | complete),
+  field_data (json — all form field values),
+  barriers_selected (json array),
+  barriers_priority_order (json array),
+  pain_type_dominant, pain_type_contributing (json),
+  icd11_pathway, icd11_subtype, icd11_severity,
+  report_text (generated), report_confirmed (bool),
+  created_at, updated_at
+
+OutcomeMeasureResult
+  id, session_id (fk), measure_name, score,
+  subscores (json), interpretation, administered_at
+
+SpecialTestResult
+  id, session_id (fk), test_id (fk to clinical_kb),
+  result (positive | negative | not_performed),
+  notes, recorded_at
+
+Session list screen shown on launch:
+  Recent sessions list: name, date, region, status
+  New session button
+  Continue existing session
+  Patient name search
+  New patient created inline — no separate screen for v1
+
+Auto-save on every field change. No save button.
+schema_version in every session record.
+Migrations required for breaking schema changes — 
+never break existing session records.
+
+═══════════════════════════════════════════════════════
+## DATABASE 2 — clinical_kb.db (reference data)
+═══════════════════════════════════════════════════════
+
+Location: ~/.local/share/physio-assessment/clinical_kb.db
+Reference data only. Read-only during sessions.
+Never contains patient data.
+Separately versioned: clinical_kb_version in metadata.
+Can be shared between clinicians as a standalone file.
+Clinician-editable over time — this is the living 
+knowledge base that grows with clinical experience.
+
+Tables:
+
+Metadata
+  key, value
+  (stores clinical_kb_version, created_at, etc.)
+
+Region
+  id, name, display_name
+  e.g. lumbar, cervical, shoulder, knee, hip, foot
+
+ClinicalPattern
+  id, region_id (fk), name, description,
+  icd11_hint (nullable)
+  e.g. "Rotator cuff tear", "L4/5 disc", 
+       "Nociplastic presentation", "SIJ dysfunction"
+
+PatternFeature
+  id, pattern_id (fk), feature_type, description, weight
+  feature_type: subjective | objective | special_test |
+                body_chart | overlay | red_flag
+  weight: float 0-1 (how strongly this supports pattern)
+
+SpecialTest
+  id, region_id (fk), name,
+  instruction_brief (1-2 sentences),
+  instruction_detailed (full how-to),
+  sensitivity (float nullable),
+  specificity (float nullable),
+  reference (citation string),
+  positive_meaning,
+  negative_meaning,
+  video_url (nullable, future use)
+
+PatternTest
+  id, pattern_id (fk), test_id (fk),
+  priority (essential | supporting)
+  Links patterns to their relevant special tests
+
+ClinicalGuideline
+  id, region_id (fk), pattern_id (fk, nullable),
+  guideline_body, recommendation,
+  evidence_grade (A | B | C | D | GPP),
+  reference, year
+
+BodyChartTrigger
+  id, region_id (fk), pattern_id (fk),
+  symptom_zone (maps to body chart coordinate zones),
+  overlay_type (nullable),
+  overlay_id (nullable)
+  Defines which body chart findings trigger patterns
+
+Build schema and empty tables now.
+Seed with one complete region as proof of concept —
+use lumbar as it has the most schema content already.
+Content population is incremental — schema correctness 
+matters more than content completeness at this stage.
+
+═══════════════════════════════════════════════════════
+## CONTEXT ENGINE — logic.py
+═══════════════════════════════════════════════════════
+
+The bridge between body chart data and right panel 
+content. Pure Python. No UI imports. Fully testable.
+
+query_patterns(region, symptom_zones, active_overlay):
+  Queries BodyChartTrigger for matches.
+  Scores ClinicalPatterns by trigger match count.
+  Returns ranked list of (ClinicalPattern, score).
+
+query_tests(pattern_ids, priority_filter=None):
+  Returns SpecialTest list for given patterns.
+  Ordered by: essential first, then supporting.
+  Includes PatternTest.priority for each.
+
+score_pattern(pattern_id, features_present):
+  Takes list of PatternFeature ids confirmed present.
+  Returns float 0.0–1.0 confidence score.
+  Used to re-rank patterns as assessment progresses.
+
+Right panel query triggers — update right panel when:
+  - Region changes
+  - Body chart JSON changes (new stroke, overlay change)
+  - Any subjective feature checkbox is ticked
+  - Any objective feature checkbox is ticked
+  - Section navigation changes (show section-relevant 
+    content even without body chart data)
+
+═══════════════════════════════════════════════════════
+## SPECIAL TEST WIDGET — right panel
+═══════════════════════════════════════════════════════
+
+Each special test surfaces as a self-contained widget:
+
+┌─────────────────────────────────────────────┐
+│ Hawkins-Kennedy Test          [Essential]   │
+│ ─────────────────────────────────────────── │
+│ Sn 79% / Sp 59%  (Hegedus 2012)            │
+│                                             │
+│ ▶ How to perform    [tap to expand]         │
+│   Flex shoulder to 90°, elbow to 90°,      │
+│   passively internally rotate...           │
+│                                             │
+│ Positive: subacromial impingement          │
+│ Negative: reduces likelihood               │
+│                                             │
+│ Result: [ ] Positive  [ ] Negative         │
+│         [ ] Not performed                  │
+└─────────────────────────────────────────────┘
+
+Result checkboxes write to SpecialTestResult in 
+sessions.db immediately on tap.
+"How to perform" is collapsible — default collapsed 
+for experienced users, expanded for reference.
+Sn/Sp shown inline always — never hidden.
+Essential tests shown before Supporting tests.
+Tests with no result yet shown before completed tests.
+
+═══════════════════════════════════════════════════════
+## SESSION LIST SCREEN
+═══════════════════════════════════════════════════════
+
+Shown on launch. Clean, minimal.
+
+┌─────────────────────────────────────────────┐
+│ PhysioChart                                 │
+│                                             │
+│ [Search patients...]                        │
+│                                             │
+│ Recent sessions:                            │
+│ ─────────────────────────────────────────── │
+│ Jane Smith    Lumbar    07 May 2026  ●      │
+│ John Davis    Lumbar    06 May 2026  ✓      │
+│ Sarah Chen    Lumbar    02 May 2026  ✓      │
+│                                             │
+│ [+ New session]                             │
+└─────────────────────────────────────────────┘
+
+● = in progress   ✓ = complete
+Tap row → continue session
+New session → inline patient name entry → 
+  select region → opens assessment panels
+
+═══════════════════════════════════════════════════════
+## BUILD ORDER — follow exactly, do not skip ahead
+═══════════════════════════════════════════════════════
+
+### Phase 0 — Read and confirm (do this first)
+0.1  Read every file in physio-bodychart/src/
+0.2  Read physio-assessment/README.md
+0.3  Read all physio-assessment/core/*.md files
+0.4  Read physio-assessment/regions/*.md files
+0.5  List all existing components in both apps
+0.6  Flag anything unclear — ask before writing code
+0.7  Confirm understanding of full architecture
+
+### Phase 1 — Foundation
+1.1  physio-bodychart: identify report components, 
+     remove cleanly, rebuild, confirm compiles
+1.2  physio-bodychart: add session JSON writer
+1.3  physio-bodychart: UI changes (no titlebar, 
+     maximise, drag handle, sidebar revealer)
+1.4  physio-bodychart: rebuild and test
+
+1.5  physio-assessment: create pyproject.toml
+     (textual, jinja2, pydantic, python 3.12)
+1.6  physio-assessment: create 4-file structure:
+     models.py, logic.py, storage.py, main.py
+1.7  Build SQLite schemas for sessions.db AND 
+     clinical_kb.db (schema only, no content yet)
+1.8  Build session list screen (launch screen)
+1.9  Build three-panel shell with correct layout,
+     resizable panels, keyboard navigation
+     No form content yet — empty panels only
+1.10 Build session JSON file watcher/reader
+1.11 Confirm: launch → session list → new session 
+     → three panels visible → body chart data 
+     populates patient name
+
+### Phase 2 — Core assessment wired end-to-end
+Wire sections in this order. For each section, 
+complete ALL THREE panels before moving to next:
+  Left panel fields → Right panel hints → 
+  Centre panel report template → Alert logic
+
+2.1  core/01 consent and ICE+ (simplest section)
+2.2  core/02 subjective (largest section — 
+     work through subsections: history, work/RTW, 
+     sleep, function, psychosocial)
+2.3  Alert system — implement all alerts now
+2.4  core/03 medical screening + red flag alerts
+2.5  core/04 pain classification + score tallies
+2.6  core/05 outcome measures + interpretations
+2.7  core/06 ICD-11 diagnosis + auto-suggestion
+2.8  core/07 barriers → auto-table wired up
+
+### Phase 3 — Region module + knowledge base
+3.1  clinical_kb.db: seed lumbar region content
+     (patterns, special tests with Sn/Sp, triggers)
+3.2  regions/lumbar_physical_examination.md → 
+     left panel fields
+3.3  Context engine: query_patterns() wired to 
+     body chart JSON reader
+3.4  Right panel: special test widgets rendering
+3.5  Right panel: live re-ranking as features ticked
+3.6  Report: lumbar physical exam section templated
+
+### Phase 4 — Polish and additional features
+4.1  Clinical pattern templates in logic.py
+4.2  Sidebar collapse in body chart
+4.3  Report export (plain text + markdown)
+4.4  Ollama integration (optional, graceful fallback)
+4.5  Shoulder region (new region module)
+
+═══════════════════════════════════════════════════════
+## ONGOING PRINCIPLES — apply throughout
+═══════════════════════════════════════════════════════
+
+Touch-first. Every interaction works with finger or 
+stylus tap before mouse or keyboard is considered.
+
+Maximum vertical space. Minimal chrome. No titlebar.
+Left sidebar only. Canvas and content fill everything.
+
+Speed. Used live in clinic. Max 2 taps to complete 
+any interaction. No modal dialogs except alerts.
+
+Never lose data. Auto-save to SQLite on every field 
+change. No save button anywhere in the app.
+
+Layer discipline. UI never owns logic. Logic never 
+owns UI. Storage never owns either. If a function 
+needs both a Textual import and a clinical calculation, 
+it is in the wrong file — split it.
+
+Tolerant reader. All Pydantic models use 
+ConfigDict(extra='ignore'). New body chart JSON 
+fields never crash the assessment app.
+
+Schema version discipline. schema_version in every 
+session record. clinical_kb_version in kb metadata. 
+Migrations required for breaking changes. Never 
+break existing records.
+
+Flag, don't guess. Clinical content is precise. If 
+a field meaning is ambiguous, a removal is uncertain, 
+or a clinical term is unclear — stop and ask. Do not 
+interpret clinical content based on assumption.
+
+Knowledge base is clinician-owned. clinical_kb.db 
+content is authored by the clinician over time. Seed 
+with correct schema and minimal correct content. 
+Accuracy matters more than completeness at every stage.

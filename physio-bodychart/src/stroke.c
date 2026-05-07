@@ -8,7 +8,7 @@ const SymptomDef SYMPTOM_DEFS[SYMPTOM_COUNT] = {
     [SYMPTOM_PAIN_INTERMITTENT] = { "Pain (intermittent)", 0.91f, 0.45f, 0.60f, FILL_DASHED      },
     [SYMPTOM_PARAESTHESIA]      = { "Pins & needles",      0.12f, 0.68f, 0.28f, FILL_DOTS_SPACED },
     [SYMPTOM_ANAESTHESIA]       = { "Anaesthesia",         0.22f, 0.54f, 0.87f, FILL_H_STROKES   },
-    [SYMPTOM_DEEP_ACHE]         = { "Paraesthesia",        0.94f, 0.62f, 0.15f, FILL_XMARKS      },
+    [SYMPTOM_DEEP_ACHE]         = { "Paraesthesia",        0.85f, 0.55f, 0.08f, FILL_XMARKS      },
     [SYMPTOM_TICK]              = { "Tick (clear)",        0.15f, 0.70f, 0.25f, FILL_TICK        },
 };
 

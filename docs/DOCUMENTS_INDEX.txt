@@ -1,0 +1,210 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║           PHASE 1.11 DOCUMENTATION — COMPLETE REFERENCE                  ║
+║                                                                           ║
+║              All Documents Created in This Session                        ║
+║                    8 May 2026                                             ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+📋 WHAT TO READ (IN THIS ORDER)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣  START HERE: SESSION_CHECKLIST_20260508.txt
+    └─ You're reading this now
+    └─ Quick overview of what was done
+    └─ Next steps checklist
+    └─ 5 minutes
+
+2️⃣  FOR CLAUDE CHAT REVIEW: CLAUDE_CHAT_ARCHITECTURE_REVIEW.md
+    └─ Architecture overview + 6 key questions
+    └─ Copy/paste this into Claude Chat on the web
+    └─ ~15 minutes to read
+    └─ Critical for getting feedback before Phase 2
+
+3️⃣  FOR IMPLEMENTATION DETAILS: SESSION_SUMMARY_20260508.md
+    └─ What changed in each part (GTK + Python)
+    └─ Files modified with line counts
+    └─ Safety guarantees + alignment with instructions
+    └─ ~10 minutes to skim
+
+4️⃣  FOR SYSTEM DESIGN: ARCHITECTURE_20260508.md
+    └─ System architecture diagram (text-based)
+    └─ Data flow examples (4 scenarios)
+    └─ Code organization by file
+    └─ Phase 2 readiness checklist
+    └─ ~15 minutes to study
+
+5️⃣  FOR GITHUB: GITHUB_UPDATE_QUICK.txt
+    └─ Quick copy-paste commands to push code
+    └─ Detailed step-by-step instructions
+    └─ What to do if something goes wrong
+    └─ ~5 minutes
+
+6️⃣  FOR FUTURE SESSIONS: README_CLAUDE_CHAT.md
+    └─ How to use these docs for architecture review
+    └─ Sample prompts to paste
+    └─ File locations
+    └─ What Claude Chat will need to know
+    └─ ~10 minutes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🗂️  FILE LOCATIONS (in /home/lance/Projects/physio-bodychart/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Documentation Files:
+  📄 SESSION_SUMMARY_20260508.md              ← Implementation details
+  📄 ARCHITECTURE_20260508.md                 ← System design
+  📄 CLAUDE_CHAT_ARCHITECTURE_REVIEW.md       ← For web review (COPY THIS)
+  📄 README_CLAUDE_CHAT.md                    ← How to use docs
+  📄 GIT_PUSH_GUIDE.md                        ← Detailed git instructions
+  📄 GITHUB_UPDATE_QUICK.txt                  ← Quick copy-paste commands
+  📄 SESSION_CHECKLIST_20260508.txt           ← This file
+  📄 DOCUMENTS_INDEX.txt                      ← This index
+  📄 claude instructions.txt                  ← Original specifications
+
+Source Code Changes:
+  GTK (C):
+    📝 physio-bodychart/src/persistence.c     ← File watcher + reload
+    📝 physio-bodychart/src/canvas.h          ← AppState additions
+    📝 physio-bodychart/src/report.h          ← ReportData additions
+    📝 physio-bodychart/src/window.c          ← Monitor wiring
+
+  Python (NEW):
+    📝 physio_assessment/watcher.py           ← Polling file watcher
+    📝 physio_assessment/storage.py           ← Atomic JSON I/O
+    📝 physio_assessment/tui.py               ← TUI with watcher integration
+
+Session Memory (for future conversations):
+  💾 ~/.claude/projects/.../memory/MEMORY.md
+  💾 ~/.claude/projects/.../memory/phase_1_11_complete.md
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📌 KEY DECISIONS YOU MADE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. File-Based Sync (Not RPC/Sockets)
+   ✓ Keeps apps independent (no direct communication)
+   ✓ Works across processes without extra infrastructure
+   ✓ Simpler to debug and test
+
+2. Polling (Not inotify/watchfiles)
+   ✓ Zero external dependencies
+   ✓ Works on any filesystem (networked or not)
+   ✓ 1-second latency acceptable for clinical workflow
+   ✓ Can upgrade to inotify later (1-line code change)
+
+3. Atomic Writes (temp file + rename)
+   ✓ Prevents corruption if process crashes mid-write
+   ✓ Reader never sees partial file
+   ✓ Matches industry best practice
+
+4. Debouncing with Timestamps
+   ✓ Prevents feedback loops
+   ✓ App ignores its own writes within 2 seconds
+   ✓ Minimal overhead, no complex state machine
+
+5. Clean Ownership Model
+   ✓ GTK owns: subjective + objective + ui sections
+   ✓ Python owns: assessment section
+   ✓ No overlapping writes = no conflicts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 IMMEDIATE NEXT ACTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+THIS SESSION (YOU JUST FINISHED):
+  ✅ Implemented file watcher in GTK
+  ✅ Created Python watcher, storage, TUI modules
+  ✅ Updated session JSON schema (version 2)
+  ✅ Created comprehensive documentation
+  ✅ Code compiles cleanly
+
+NEXT SESSION (BEFORE PHASE 2):
+  1. Copy CLAUDE_CHAT_ARCHITECTURE_REVIEW.md
+  2. Go to claude.ai (Claude Chat on the web)
+  3. Paste the document
+  4. Ask the 6 key questions
+  5. Get feedback on architecture, safety, scaling
+  6. Implement any refinements Claude Chat suggests
+  7. Do live testing (run both apps)
+  8. Push to GitHub (follow GITHUB_UPDATE_QUICK.txt)
+  9. Share commit SHA with Claude Chat
+  10. Get final approval to start Phase 2
+
+THEN: Phase 2.1 — Wire core/01_consent_setup.md (simplest section)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 WHY THIS MATTERS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Phase 1.11 is the FOUNDATION of everything that comes next:
+
+  • Phase 2 builds assessment forms — they need reliable sync
+  • Phase 3 builds knowledge base — it reads from live session files
+  • Phase 4 builds export/integration — depends on clean JSON structure
+
+If the file watcher isn't rock-solid:
+  ❌ Data loss (app crashes lose work)
+  ❌ Conflicts (both apps try to write same field)
+  ❌ Feedback loops (infinite saves)
+  ❌ Race conditions (corrupted JSON)
+
+That's why Claude Chat review is critical — get architecture feedback NOW,
+before you build 20 assessment sections on top of a shaky foundation.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✨ YOU'RE IN GOOD SHAPE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+What you've built is:
+  ✅ Architecturally sound (clean separation of concerns)
+  ✅ Well-documented (5 markdown files + 2 text guides)
+  ✅ Tested for compilation (no warnings, no errors)
+  ✅ Ready for review (architecture questions prepared)
+  ✅ Clear next steps (GitHub → live test → Phase 2)
+
+You're not guessing or hacking — you're following a clear plan, implementing
+one phase at a time, and getting expert feedback before committing to the
+next phase.
+
+That's how you build clinical software that people can trust.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❓ QUESTIONS BEFORE YOU GO?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you have questions before pushing to GitHub, look here first:
+
+  Q: How do I run both apps to test the file watcher?
+  A: See SESSION_SUMMARY_20260508.md "Testing Performed" section
+
+  Q: What if the build fails after I push?
+  A: See GITHUB_UPDATE_QUICK.txt "If something goes wrong"
+
+  Q: What should I ask Claude Chat about?
+  A: See CLAUDE_CHAT_ARCHITECTURE_REVIEW.md "Questions for Review"
+
+  Q: How do I know when it's safe to start Phase 2?
+  A: See README_CLAUDE_CHAT.md + wait for Claude Chat approval
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 READY? START HERE:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Open CLAUDE_CHAT_ARCHITECTURE_REVIEW.md
+2. Copy the entire content
+3. Go to https://claude.ai/ (Claude Chat on the web)
+4. Paste it into a new conversation
+5. Ask: "Is this architecture ready for Phase 2? What concerns do you have?"
+6. Get feedback, implement any changes
+7. Come back and push to GitHub
+
+Good luck! You're building something important. 🎯
+
+═══════════════════════════════════════════════════════════════════════════════

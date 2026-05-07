@@ -1,0 +1,41 @@
+The search returned some useful clinical sources. Here's a streamlined differentiation table covering the main neck pain categories a physio will encounter:
+Neck Pain Differentiation: Key Clinical Features
+Feature	Axial / Mechanical	Cervical Radiculopathy	Discogenic	Facet Joint	Myelopathy
+Primary pain location	Neck ± periscapular	Neck + arm (unilateral, dermatomal)	Deep, central axial neck	Unilateral neck ± referral to scapula / shoulder	Neck ± bilateral arm/leg
+Arm symptoms	None	Yes — paraesthesia, numbness, weakness following dermatome	Possible diffuse referral (non-dermatomal)	Possible referral to shoulder/arm (non-dermatomal)	Bilateral — diffuse, heavy, clumsy hands
+Neuro signs	None	Positive — reduced reflex, myotomal weakness, sensory change	None	None	UMN signs: hyperreflexia, Babinski, Hoffman's
+Aggravating movements	Variable — flexion or extension	Extension + ipsilateral rotation / lateral flexion (compresses foramen)	Flexion (loads disc)	Extension + rotation (loads facet)	Variable; often insidious progression
+Relieved by	Rest, movement variation	Arm elevation (shoulder abduction sign), distraction	Unloading / supine	Flexion / unloading	—
+Night pain	Uncommon	Common	Often significant	Uncommon	Variable
+Pain quality	Dull, aching	Sharp, burning, electric ("shooting" into arm)	Deep, constant ache	Localised dull ache	Diffuse heaviness, poorly localised
+Key clinical test	Palpation, AROM	Spurling's, ULNT1, distraction test	Sustained flexion loading provokes	Passive accessory PA pressure reproduces	Grip/release speed, tandem gait, Hoffman's
+Key Differentiators Clinically
+
+Radiculopathy vs axial/facet pain:PubMedCentral(PMC)+1
+
+    Arm pain worse than neck pain = strongly suggests radiculopathy
+    Dermatomal pattern + at least one of: altered reflex, weakness, paraesthesia = radiculopathy cluster
+    Spurling's + ULNT1 + distraction test — 3 of these positive together has good specificity for radiculopathyClinicalTrialsGov
+
+Discogenic vs facet:PubMedCentral(PMC)+1
+
+    Flexion loads the disc; extension loads the facet — use this as a screen
+    Discogenic: deep, constant, often worse at night, flexion-dominant aggravation
+    Facet: more localised, extension + rotation provokes, PA joint pressure reproduces familiar pain
+    Note: referral patterns from disc and facet overlap significantly — Grubb & Kelly found shoulder referral from IVD mimics facet referralUeaeprints
+
+Myelopathy — must not miss:PubMedCentral(PMC)
+
+    Hand clumsiness, grip/release deterioration, gait instability, urinary urgency — even without significant neck pain
+    Bilateral symptoms = red flag, requires urgent imaging
+    Hyperreflexia, positive Hoffman's, positive Babinski = UMN, refer immediately
+
+Red Flags Across All Categories
+
+Worth a quick screen on every neck pain patient:APTAOrthopedics+1
+
+    Bilateral arm symptoms — suspect myelopathy or central disc herniation
+    Progressive neurological deficit — urgent referral
+    Trauma + midline tenderness — Canadian C-Spine Rule / imaging before manual therapy
+    Night pain + unexplained weight loss / age >50 — screen for malignancy
+    Vertebrobasilar symptoms (drop attacks, diplopia, dizziness, dysarthria, dysphagia) — assess before cervical manipulation

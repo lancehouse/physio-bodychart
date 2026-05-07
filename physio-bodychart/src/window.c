@@ -20,17 +20,12 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl,
 {
     (void)ctrl; (void)keycode;
     AppState *app = (AppState *)data;
-    if (app->current_mode == APP_MODE_REPORT) {
-        if (keyval == GDK_KEY_F5) {
-            report_activate(app);
-            return TRUE;
-        }
-        if ((mods & GDK_CONTROL_MASK) && (mods & GDK_SHIFT_MASK) &&
-            (keyval == GDK_KEY_C || keyval == GDK_KEY_c)) {
-            report_copy_all(app);
-            return TRUE;
-        }
+
+    if ((mods & GDK_CONTROL_MASK) && (keyval == GDK_KEY_q || keyval == GDK_KEY_Q)) {
+        gtk_window_destroy(GTK_WINDOW(app->window));
+        return TRUE;
     }
+
     return input_key_pressed(app, keyval, mods);
 }
 
@@ -43,6 +38,7 @@ static void on_symptom_clicked(GtkButton *btn, gpointer data)
     app->symptom = st;
     app->tool    = TOOL_DRAW;
     update_toolbar_state(app);
+    persistence_write_session_current(app);
 }
 
 /* ── Layout / view switching ────────────────────────────────────────────── */
@@ -54,6 +50,7 @@ static void on_layout_clicked(GtkButton *btn, gpointer data)
     LayoutMode mode = (LayoutMode)(gintptr)pair[1];
     canvas_set_layout(app, mode);
     update_toolbar_state(app);
+    persistence_write_session_current(app);
 }
 
 /* ── Overlay controls ───────────────────────────────────────────────────── */
@@ -72,6 +69,7 @@ static void on_overlay_cat_clicked(GtkButton *btn, gpointer data)
     }
     canvas_invalidate(app);
     update_toolbar_state(app);
+    persistence_write_session_current(app);
 }
 
 static void on_overlay_prev(GtkButton *btn, gpointer data)
@@ -84,6 +82,7 @@ static void on_overlay_prev(GtkButton *btn, gpointer data)
         app->overlay_visible = TRUE;
         canvas_invalidate(app);
         update_toolbar_state(app);
+        persistence_write_session_current(app);
     }
 }
 
@@ -97,6 +96,7 @@ static void on_overlay_next(GtkButton *btn, gpointer data)
         app->overlay_visible = TRUE;
         canvas_invalidate(app);
         update_toolbar_state(app);
+        persistence_write_session_current(app);
     }
 }
 
@@ -114,6 +114,7 @@ static void on_note_clicked(GtkButton *btn, gpointer data)
     AppState *app = data;
     app->tool = (app->tool == TOOL_NOTE) ? TOOL_DRAW : TOOL_NOTE;
     update_toolbar_state(app);
+    persistence_write_session_current(app);
 }
 
 /* ── Arrow tool button ──────────────────────────────────────────────────── */
@@ -123,6 +124,7 @@ static void on_arrow_clicked(GtkButton *btn, gpointer data)
     AppState *app = data;
     app->tool = (app->tool == TOOL_ARROW) ? TOOL_DRAW : TOOL_ARROW;
     update_toolbar_state(app);
+    persistence_write_session_current(app);
 }
 
 /* ── Tool buttons ───────────────────────────────────────────────────────── */
@@ -132,6 +134,7 @@ static void on_erase_clicked(GtkButton *btn, gpointer data)
     AppState *app = data;
     app->tool = (app->tool == TOOL_ERASE) ? TOOL_DRAW : TOOL_ERASE;
     update_toolbar_state(app);
+    persistence_write_session_current(app);
 }
 /* ── Link matrix popup ───────────────────────────────────────────────────── */
 
@@ -342,7 +345,9 @@ static void on_clear_clicked(GtkButton *btn, gpointer data)
 {
     (void)btn;
     AppState *app = data;
+    persistence_monitor_stop(app);
     canvas_clear(app);
+    persistence_monitor_start(app);
 }
 
 /* ── Toolbar state references ───────────────────────────────────────────── */
@@ -367,7 +372,6 @@ static GtkWidget *g_obj_ppt_btn;
 static GtkWidget *g_obj_ts_btn;
 static GtkWidget *g_obj_erase_btn;
 static GtkWidget *g_sidebar_content_stack;
-static GtkWidget *g_content_stack;   /* chart vs report */
 
 static void update_toolbar_state(AppState *app)
 {
@@ -415,6 +419,13 @@ static void update_toolbar_state(AppState *app)
                             active ? "tool-btn-active" : "tool-btn");
     }
 
+    for (int i = 0; i < APP_MODE_COUNT; i++) {
+        if (!g_mode_btns[i]) continue;
+        gboolean active = (app->current_mode == (AppMode)i);
+        gtk_widget_set_name(g_mode_btns[i],
+                            active ? "mode-btn-active" : "mode-btn");
+    }
+
     for (int i = 0; i < 2; i++) {
         if (!g_right_slot_btns[i]) continue;
         char buf[20];
@@ -452,11 +463,6 @@ static void update_toolbar_state(AppState *app)
         }
     }
 
-    for (int i = 0; i < APP_MODE_COUNT; i++) {
-        if (!g_mode_btns[i]) continue;
-        gtk_widget_set_name(g_mode_btns[i],
-            (AppMode)i == app->current_mode ? "mode-btn-active" : "mode-btn");
-    }
 
     /* ── Objective sidebar button states ── */
     for (int i = 0; i < OBJ_ZONE_COUNT; i++) {
@@ -491,17 +497,10 @@ static void update_toolbar_state(AppState *app)
         const char *page;
         switch (app->current_mode) {
             case APP_MODE_OBJECTIVE: page = "obj"; break;
-            case APP_MODE_REPORT:    page = "rpt"; break;
             default:                 page = "sx";  break;
         }
         gtk_stack_set_visible_child_name(
             GTK_STACK(g_sidebar_content_stack), page);
-    }
-
-    /* ── Content stack: chart vs report ── */
-    if (g_content_stack) {
-        gtk_stack_set_visible_child_name(GTK_STACK(g_content_stack),
-            app->current_mode == APP_MODE_REPORT ? "report" : "chart");
     }
 }
 
@@ -509,13 +508,11 @@ static void update_toolbar_state(AppState *app)
 void window_autosave(AppState *app)
 {
     if (!app->session_file[0]) return;
-    /* Capture report edits before saving JSON */
-    if (app->current_mode == APP_MODE_REPORT)
-        report_deactivate(app);
     gboolean ok = persistence_save(app);
     if (ok) ok = session_export_subj_png(app);
-    if (app->current_mode == APP_MODE_REPORT)
-        report_save_md(app);
+    if (ok) ok = session_export_obj_png(app);
+    if (ok) ok = session_export_combined_png(app);
+    persistence_write_session_current(app);
     if (g_file_status_label) {
         if (ok) {
             time_t now = time(NULL);
@@ -538,16 +535,9 @@ static void on_mode_clicked(GtkButton *btn, gpointer data)
     AppMode    mode = (AppMode)(gintptr)pair[1];
     if (app->current_mode == mode) return;
 
-    /* Leaving report mode: capture user edits before switching */
-    if (app->current_mode == APP_MODE_REPORT)
-        report_deactivate(app);
-
     window_autosave(app);
     app->current_mode = mode;
-
-    /* Entering report mode: regenerate buffer */
-    if (mode == APP_MODE_REPORT)
-        report_activate(app);
+    persistence_write_session_current(app);
 
     update_toolbar_state(app);
     canvas_invalidate(app);
@@ -601,6 +591,10 @@ static void apply_css(void)
 
         /* ── Sidebar + tab bar ── */
         "#sidebar { background: #1e1e1e; min-width: 150px; max-width: 150px; }"
+        ".drag-handle { background: #444; border-radius: 3px; margin: 2px; }"
+        "#drag-handle-btn { background: #333; color: #999; border: 1px solid #555;"
+        "  font-size: 14px; padding: 0; border-radius: 2px; }"
+        "#drag-handle-btn:hover { background: #444; color: #ccc; }"
         "#tab-bar { background: #151515; padding: 2px 2px 0 2px; }"
         "#tab-btn { background: #2a2a2a; color: #777; font-size: 11px;"
         "  border-radius: 4px 4px 0 0; min-height: 34px; min-width: 0;"
@@ -774,6 +768,7 @@ struct _WizardData {
 };
 
 static gboolean g_wizard_open = FALSE;
+static gboolean g_ppt_dialog_open = FALSE;
 
 static void wizard_commit(WizardData *wd);   /* forward decl */
 
@@ -1249,7 +1244,65 @@ typedef struct {
 static void on_ppt_destroy(GtkWidget *w, gpointer data)
 {
     (void)w;
+    g_ppt_dialog_open = FALSE;
     g_free(data);
+}
+
+static void on_ppt_keypad_digit(GtkButton *btn, gpointer data)
+{
+    PPTEntryData *pd = (PPTEntryData *)data;
+    const char *label = gtk_button_get_label(btn);
+    if (!label) return;
+
+    const char *current = gtk_editable_get_text(GTK_EDITABLE(pd->entry));
+    gchar stripped[4] = {0};
+    int stripped_len = 0;
+
+    for (int i = 0; current[i]; i++) {
+        if (current[i] >= '0' && current[i] <= '9') {
+            if (stripped_len < 2) {
+                stripped[stripped_len++] = current[i];
+            }
+        }
+    }
+
+    if (stripped_len < 2) {
+        stripped[stripped_len++] = label[0];
+        if (stripped_len == 2) {
+            gchar formatted[8];
+            snprintf(formatted, sizeof(formatted), "%c.%c", stripped[0], stripped[1]);
+            gtk_editable_set_text(GTK_EDITABLE(pd->entry), formatted);
+        } else {
+            gtk_editable_set_text(GTK_EDITABLE(pd->entry), stripped);
+        }
+    }
+}
+
+static void on_ppt_keypad_delete(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    PPTEntryData *pd = (PPTEntryData *)data;
+    const char *current = gtk_editable_get_text(GTK_EDITABLE(pd->entry));
+
+    gchar stripped[4] = {0};
+    int stripped_len = 0;
+
+    for (int i = 0; current[i]; i++) {
+        if (current[i] >= '0' && current[i] <= '9') {
+            if (stripped_len < 2) {
+                stripped[stripped_len++] = current[i];
+            }
+        }
+    }
+
+    if (stripped_len > 0) {
+        stripped_len--;
+        if (stripped_len == 1) {
+            gtk_editable_set_text(GTK_EDITABLE(pd->entry), stripped);
+        } else if (stripped_len == 0) {
+            gtk_editable_set_text(GTK_EDITABLE(pd->entry), "");
+        }
+    }
 }
 
 static void on_ppt_confirm(GtkButton *btn, gpointer data)
@@ -1289,6 +1342,9 @@ static void on_ppt_cancel(GtkButton *btn, gpointer data)
 
 static void show_ppt_entry(AppState *app, int view, double bx, double by)
 {
+    if (g_ppt_dialog_open) return;
+    g_ppt_dialog_open = TRUE;
+
     PPTEntryData *pd = g_malloc0(sizeof(PPTEntryData));
     pd->app  = app;
     pd->view = view;
@@ -1308,11 +1364,11 @@ static void show_ppt_entry(AppState *app, int view, double bx, double by)
     /* Free pd exactly once on any close path (OK, Cancel, or WM close). */
     g_signal_connect(pd->window, "destroy", G_CALLBACK(on_ppt_destroy), pd);
 
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_start(box, 16);
-    gtk_widget_set_margin_end(box, 16);
-    gtk_widget_set_margin_top(box, 12);
-    gtk_widget_set_margin_bottom(box, 12);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 12);
+    gtk_widget_set_margin_top(box, 8);
+    gtk_widget_set_margin_bottom(box, 8);
 
     GtkWidget *lbl = gtk_label_new(title);
     gtk_widget_set_name(lbl, "section-label");
@@ -1323,6 +1379,34 @@ static void show_ppt_entry(AppState *app, int view, double bx, double by)
         (pd->type == OBJ_POINT_PPT) ? "e.g. 4.2" : "0–10");
     gtk_widget_set_size_request(pd->entry, -1, 48);
     gtk_box_append(GTK_BOX(box), pd->entry);
+
+    GtkWidget *keypad = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(keypad), 2);
+    gtk_grid_set_row_spacing(GTK_GRID(keypad), 2);
+    gtk_widget_set_hexpand(keypad, TRUE);
+
+    const char *keypad_layout[] = { "7", "8", "9",
+                                     "4", "5", "6",
+                                     "1", "2", "3",
+                                     "0", "", "⌫" };
+    for (int i = 0; i < 12; i++) {
+        int row = i / 3, col = i % 3;
+        const char *label = keypad_layout[i];
+        if (!label || !label[0]) continue;
+
+        GtkWidget *btn = gtk_button_new_with_label(label);
+        gtk_widget_set_hexpand(btn, TRUE);
+        gtk_widget_set_vexpand(btn, TRUE);
+        gtk_widget_set_size_request(btn, 40, 40);
+
+        if (strcmp(label, "⌫") == 0) {
+            g_signal_connect(btn, "clicked", G_CALLBACK(on_ppt_keypad_delete), pd);
+        } else {
+            g_signal_connect(btn, "clicked", G_CALLBACK(on_ppt_keypad_digit), pd);
+        }
+        gtk_grid_attach(GTK_GRID(keypad), btn, col, row, 1, 1);
+    }
+    gtk_box_append(GTK_BOX(box), keypad);
 
     GtkWidget *btn_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
@@ -1482,7 +1566,7 @@ static GtkWidget *build_mode_strip(AppState *app)
     gtk_widget_set_margin_top(strip, 4);
     gtk_widget_set_margin_bottom(strip, 2);
 
-    static const char *labels[APP_MODE_COUNT] = { "Sx", "Obj", "Rpt" };
+    static const char *labels[APP_MODE_COUNT] = { "Sx", "Obj" };
     static gpointer    pairs[APP_MODE_COUNT][2];
 
     for (int i = 0; i < APP_MODE_COUNT; i++) {
@@ -1494,10 +1578,66 @@ static GtkWidget *build_mode_strip(AppState *app)
         pairs[i][0] = app;
         pairs[i][1] = (gpointer)(gintptr)i;
         g_signal_connect(btn, "clicked", G_CALLBACK(on_mode_clicked), pairs[i]);
-        g_mode_btns[i] = btn;
         gtk_box_append(GTK_BOX(strip), btn);
+        g_mode_btns[i] = btn;
     }
     return strip;
+}
+
+/* ── Drag handle callbacks ────────────────────────────────────────────────── */
+static void on_minimize_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    AppState *app = data;
+    gtk_window_minimize(GTK_WINDOW(app->window));
+}
+
+static void on_maximize_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    AppState *app = data;
+    if (gtk_window_is_maximized(GTK_WINDOW(app->window)))
+        gtk_window_unmaximize(GTK_WINDOW(app->window));
+    else
+        gtk_window_maximize(GTK_WINDOW(app->window));
+}
+
+static void on_close_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    AppState *app = data;
+    gtk_window_destroy(GTK_WINDOW(app->window));
+}
+
+/* ── Build drag handle with window controls ────────────────────────────── */
+static GtkWidget *build_drag_handle(AppState *app)
+{
+    GtkWidget *handle = gtk_window_handle_new();
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_window_handle_set_child(GTK_WINDOW_HANDLE(handle), box);
+
+    GtkWidget *min_btn = gtk_button_new_with_label("−");
+    gtk_widget_set_name(min_btn, "drag-handle-btn");
+    gtk_widget_set_size_request(min_btn, 20, 20);
+    g_signal_connect(min_btn, "clicked", G_CALLBACK(on_minimize_clicked), app);
+    gtk_box_append(GTK_BOX(box), min_btn);
+
+    GtkWidget *max_btn = gtk_button_new_with_label("□");
+    gtk_widget_set_name(max_btn, "drag-handle-btn");
+    gtk_widget_set_size_request(max_btn, 20, 20);
+    g_signal_connect(max_btn, "clicked", G_CALLBACK(on_maximize_clicked), app);
+    gtk_box_append(GTK_BOX(box), max_btn);
+
+    GtkWidget *close_btn = gtk_button_new_with_label("×");
+    gtk_widget_set_name(close_btn, "drag-handle-btn");
+    gtk_widget_set_size_request(close_btn, 20, 20);
+    g_signal_connect(close_btn, "clicked", G_CALLBACK(on_close_clicked), app);
+    gtk_box_append(GTK_BOX(box), close_btn);
+
+    gtk_widget_set_halign(handle, GTK_ALIGN_START);
+    gtk_widget_set_valign(handle, GTK_ALIGN_START);
+    gtk_widget_set_size_request(handle, 60, 20);
+    return handle;
 }
 
 /* ── Build tabbed sidebar ────────────────────────────────────────────────── */
@@ -1507,6 +1647,9 @@ static GtkWidget *build_sidebar(AppState *app)
     gtk_widget_set_name(outer, "sidebar");
     gtk_widget_set_size_request(outer, 150, -1);
     gtk_widget_set_hexpand(outer, FALSE);
+
+    GtkWidget *drag_handle = build_drag_handle(app);
+    gtk_box_append(GTK_BOX(outer), drag_handle);
 
     /* Mode strip */
     gtk_box_append(GTK_BOX(outer), build_mode_strip(app));
@@ -1568,21 +1711,6 @@ static GtkWidget *build_sidebar(AppState *app)
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(obj_sc), build_obj_tab(app));
     gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), obj_sc, "obj");
 
-    /* ── Rpt sidebar ── */
-    GtkWidget *rpt_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_widget_set_margin_top(rpt_box, 10);
-    gtk_widget_set_margin_start(rpt_box, 6);
-    gtk_widget_set_margin_end(rpt_box, 6);
-    GtkWidget *rpt_hdr = gtk_label_new("Report");
-    gtk_widget_set_name(rpt_hdr, "section-label");
-    gtk_box_append(GTK_BOX(rpt_box), rpt_hdr);
-    GtkWidget *rpt_hint = gtk_label_new("F5  Regenerate\nCtrl+Shift+C  Copy");
-    gtk_widget_set_name(rpt_hint, "section-label");
-    gtk_label_set_justify(GTK_LABEL(rpt_hint), GTK_JUSTIFY_LEFT);
-    gtk_label_set_xalign(GTK_LABEL(rpt_hint), 0.0);
-    gtk_box_append(GTK_BOX(rpt_box), rpt_hint);
-    gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), rpt_box, "rpt");
-
     gtk_box_append(GTK_BOX(outer), g_sidebar_content_stack);
 
     set_active_tab(0);
@@ -1609,6 +1737,7 @@ static void launch_commit_new(GtkButton *btn, gpointer data)
     const char *lbl = gtk_editable_get_text(GTK_EDITABLE(ld->label_entry));
     if (!id || id[0] == '\0') id = "XX";
     persistence_build_paths(ld->app, id, lbl);
+    persistence_monitor_start(ld->app);
     GtkWidget *launch_win = ld->window;
     window_create(ld->app, ld->gapp);
     gtk_window_destroy(GTK_WINDOW(launch_win));
@@ -1621,6 +1750,7 @@ static void launch_commit_open(GtkButton *btn, gpointer data)
     LaunchData *ld = data;
     if (!ld->selected_path[0]) return;
     if (!persistence_load(ld->app, ld->selected_path)) return;
+    persistence_monitor_start(ld->app);
     GtkWidget *launch_win = ld->window;
     window_create(ld->app, ld->gapp);
     gtk_window_destroy(GTK_WINDOW(launch_win));
@@ -1823,6 +1953,7 @@ static void on_main_window_close(GtkWidget *w, gpointer data)
 {
     (void)w;
     AppState *app = data;
+    persistence_monitor_stop(app);
     window_autosave(app);
 }
 
@@ -1837,6 +1968,7 @@ void window_create(AppState *app, GtkApplication *gtk_app)
     app->window = gtk_application_window_new(gtk_app);
     gtk_window_set_title(GTK_WINDOW(app->window), "PhysioChart");
     gtk_window_set_default_size(GTK_WINDOW(app->window), 900, 700);
+    gtk_window_set_decorated(GTK_WINDOW(app->window), FALSE);
     gtk_window_maximize(GTK_WINDOW(app->window));
 
     g_signal_connect(app->window, "destroy",
@@ -1847,16 +1979,10 @@ void window_create(AppState *app, GtkApplication *gtk_app)
 
     gtk_box_append(GTK_BOX(hbox), build_sidebar(app));
 
-    g_content_stack = gtk_stack_new();
-    gtk_stack_set_transition_type(GTK_STACK(g_content_stack),
-                                  GTK_STACK_TRANSITION_TYPE_NONE);
-    gtk_widget_set_hexpand(g_content_stack, TRUE);
-    gtk_widget_set_vexpand(g_content_stack, TRUE);
-
     GtkWidget *canvas = canvas_new(app);
-    gtk_stack_add_named(GTK_STACK(g_content_stack), canvas, "chart");
-    gtk_stack_add_named(GTK_STACK(g_content_stack), report_view_new(app), "report");
-    gtk_box_append(GTK_BOX(hbox), g_content_stack);
+    gtk_widget_set_hexpand(canvas, TRUE);
+    gtk_widget_set_vexpand(canvas, TRUE);
+    gtk_box_append(GTK_BOX(hbox), canvas);
 
     GtkEventController *key_ctrl = gtk_event_controller_key_new();
     gtk_widget_add_controller(app->window, key_ctrl);

@@ -11,7 +11,6 @@
 typedef enum {
     APP_MODE_SUBJECTIVE = 0,
     APP_MODE_OBJECTIVE,
-    APP_MODE_REPORT,
     APP_MODE_COUNT
 } AppMode;
 
@@ -171,6 +170,8 @@ struct _AppState {
     char     session_dir[512];    /* ~/PhysioChart/JB_01_05_2026_1430 */
     char     session_file[512];   /* full path to _session.json */
     time_t   session_created;
+    GFileMonitor *session_file_monitor;  /* file watcher for session JSON */
+    gint64   last_own_save_us;           /* timestamp of last persistence_save() call */
 
     /* ── Objective chart ─────────────────────────────────────────────────────── */
     ObjZone  *obj_zones[MAX_OBJ_ZONES];

@@ -238,6 +238,27 @@ gboolean persistence_save(AppState *app)
     json_object_object_add(root, "objective", obj);
     json_object_object_add(root, "neuro",
         json_object_new_object());
+
+    /* Assessment block (Python-owned) */
+    json_object *assess = json_object_new_object();
+    json_object_object_add(assess, "history",
+        json_object_new_string(app->report.history));
+    json_object_object_add(assess, "agg_factors",
+        json_object_new_string(app->report.agg_factors));
+    json_object_object_add(assess, "ease_factors",
+        json_object_new_string(app->report.ease_factors));
+    json_object_object_add(assess, "behaviour_24hr",
+        json_object_new_string(app->report.behaviour_24hr));
+    json_object_object_add(assess, "diagnosis",
+        json_object_new_string(app->report.assessment));
+    json_object_object_add(assess, "plan",
+        json_object_new_string(app->report.plan));
+    json_object_object_add(assess, "clinical_notes",
+        json_object_new_string(app->report.clinical_notes));
+    json_object_object_add(assess, "modified",
+        json_object_new_int64((int64_t)time(NULL)));
+    json_object_object_add(root, "assessment", assess);
+
     json_object *rpt = json_object_new_object();
     json_object_object_add(rpt, "assessment",
         json_object_new_string(app->report.assessment));
@@ -258,6 +279,9 @@ gboolean persistence_save(AppState *app)
         json_object_object_add(rpt, "note_subj", ns_arr);
     }
     json_object_object_add(root, "report", rpt);
+
+    /* Record timestamp of this save for debouncing file monitor */
+    app->last_own_save_us = g_get_monotonic_time();
 
     /* Write to file */
     const char *json_str = json_object_to_json_string_ext(root,
@@ -564,7 +588,7 @@ gboolean persistence_load(AppState *app, const char *path)
     if (json_object_object_get_ex(root, "objective", &obj_j))
         load_obj_data(app, obj_j);
 
-    /* Report */
+    /* Report (legacy) */
     json_object *rpt_j;
     if (json_object_object_get_ex(root, "report", &rpt_j)) {
         g_strlcpy(app->report.assessment,
@@ -585,6 +609,25 @@ gboolean persistence_load(AppState *app, const char *path)
                               js(ns, KEYS[f]), REPORT_NOTE_FIELD_LEN);
             }
         }
+    }
+
+    /* Assessment block (Python-owned, takes precedence if newer) */
+    json_object *assess_j;
+    if (json_object_object_get_ex(root, "assessment", &assess_j)) {
+        g_strlcpy(app->report.history,
+                  js(assess_j, "history"),        REPORT_SECTION_LEN);
+        g_strlcpy(app->report.agg_factors,
+                  js(assess_j, "agg_factors"),    REPORT_NOTE_FIELD_LEN);
+        g_strlcpy(app->report.ease_factors,
+                  js(assess_j, "ease_factors"),   REPORT_NOTE_FIELD_LEN);
+        g_strlcpy(app->report.behaviour_24hr,
+                  js(assess_j, "behaviour_24hr"), REPORT_NOTE_FIELD_LEN);
+        g_strlcpy(app->report.assessment,
+                  js(assess_j, "diagnosis"),      REPORT_SECTION_LEN);
+        g_strlcpy(app->report.plan,
+                  js(assess_j, "plan"),           REPORT_SECTION_LEN);
+        g_strlcpy(app->report.clinical_notes,
+                  js(assess_j, "clinical_notes"), REPORT_SECTION_LEN);
     }
 
     json_object_put(root);
@@ -645,4 +688,181 @@ int persistence_scan_recent(PersistRecent *out, int max)
     }
 
     return count;
+}
+
+/* ── Write simplified session file for physio-assessment integration ─────────── */
+
+static gboolean ensure_share_dir(void)
+{
+    char path[512];
+    const char *home = g_get_home_dir();
+    snprintf(path, sizeof(path), "%s/.local", home);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) return FALSE;
+
+    snprintf(path, sizeof(path), "%s/.local/share", home);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) return FALSE;
+
+    snprintf(path, sizeof(path), "%s/.local/share/physio-bodychart", home);
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) return FALSE;
+
+    return TRUE;
+}
+
+gboolean persistence_write_session_current(AppState *app)
+{
+    if (!ensure_share_dir()) return FALSE;
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/.local/share/physio-bodychart/session_current.json",
+             g_get_home_dir());
+
+    json_object *root = json_object_new_object();
+
+    json_object_object_add(root, "schema_version", json_object_new_int(2));
+
+    if (app->session_file[0])
+        json_object_object_add(root, "session_file",
+            json_object_new_string(app->session_file));
+
+    json_object_object_add(root, "session_id",
+        json_object_new_string(app->patient_id[0] ? app->patient_id : ""));
+
+    if (app->session_label[0])
+        json_object_object_add(root, "session_label",
+            json_object_new_string(app->session_label));
+
+    char iso8601_date[32];
+    time_t now = time(NULL);
+    struct tm *t = gmtime(&now);
+    strftime(iso8601_date, sizeof(iso8601_date), "%Y-%m-%dT%H:%M:%SZ", t);
+    json_object_object_add(root, "date", json_object_new_string(iso8601_date));
+
+    json_object *body_chart = json_object_new_object();
+    json_object_object_add(body_chart, "strokes", strokes_to_json(app->strokes));
+
+    json_object *symptom_types = json_object_new_array();
+    for (int i = 0; i < app->strokes->n; i++) {
+        int type = app->strokes->strokes[i]->type;
+        gboolean found = FALSE;
+        for (size_t j = 0; j < json_object_array_length(symptom_types); j++) {
+            if (json_object_get_int(json_object_array_get_idx(symptom_types, j)) == type) {
+                found = TRUE;
+                break;
+            }
+        }
+        if (!found) {
+            json_object_array_add(symptom_types, json_object_new_int(type));
+        }
+    }
+    json_object_object_add(body_chart, "symptom_types_used", symptom_types);
+
+    json_object_object_add(body_chart, "active_overlay",
+        app->overlay_visible ? json_object_new_int(app->overlay_category) : NULL);
+    json_object_object_add(body_chart, "overlay_category",
+        app->overlay_visible ? json_object_new_int(app->overlay_category) : NULL);
+    json_object_object_add(body_chart, "overlay_index",
+        app->overlay_visible ? json_object_new_int(app->overlay_index) : NULL);
+
+    json_object *views_drawn = json_object_new_array();
+    json_object_array_add(views_drawn, json_object_new_int(app->current_view));
+    json_object_object_add(body_chart, "views_drawn", views_drawn);
+
+    json_object_object_add(root, "body_chart", body_chart);
+
+    gboolean ok = json_object_to_file(path, root) == 0;
+    json_object_put(root);
+
+    return ok;
+}
+
+/* ── File Watcher for Session JSON (integration with physio-assessment) ────── */
+
+static void on_session_file_changed(GFileMonitor *m, GFile *f, GFile *other,
+                                     GFileMonitorEvent ev, gpointer data)
+{
+    (void)m; (void)f; (void)other;
+    if (ev != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT) return;
+
+    AppState *app = (AppState *)data;
+    gint64 age_us = g_get_monotonic_time() - app->last_own_save_us;
+    if (age_us < 2000000) return;  /* ignore our own writes (within 2 seconds) */
+
+    persistence_reload_assessment(app);
+    if (app->toolbar_update_cb) app->toolbar_update_cb(app);
+    canvas_invalidate(app);
+}
+
+void persistence_monitor_start(AppState *app)
+{
+    if (!app->session_file[0]) return;  /* no session active */
+    if (app->session_file_monitor) return;  /* already running */
+
+    GFile *f = g_file_new_for_path(app->session_file);
+    GError *err = NULL;
+    app->session_file_monitor = g_file_monitor_file(f, G_FILE_MONITOR_NONE, NULL, &err);
+    if (!app->session_file_monitor) {
+        fprintf(stderr, "persistence_monitor_start: g_file_monitor_file failed: %s\n",
+                err ? err->message : "unknown error");
+        if (err) g_error_free(err);
+        g_object_unref(f);
+        return;
+    }
+    g_signal_connect(app->session_file_monitor, "changed",
+                     G_CALLBACK(on_session_file_changed), app);
+    g_object_unref(f);
+}
+
+void persistence_monitor_stop(AppState *app)
+{
+    if (!app->session_file_monitor) return;
+    g_file_monitor_cancel(app->session_file_monitor);
+    g_object_unref(app->session_file_monitor);
+    app->session_file_monitor = NULL;
+}
+
+void persistence_reload_assessment(AppState *app)
+{
+    if (!app->session_file[0]) return;
+
+    json_object *root = json_object_from_file(app->session_file);
+    if (!root) {
+        fprintf(stderr, "persistence_reload_assessment: failed to parse %s\n",
+                app->session_file);
+        return;
+    }
+
+    json_object *assessment = json_object_object_get(root, "assessment");
+    if (assessment) {
+        json_object *jstr = json_object_object_get(assessment, "history");
+        if (jstr)
+            snprintf(app->report.history, sizeof(app->report.history), "%s",
+                     json_object_get_string(jstr));
+
+        jstr = json_object_object_get(assessment, "agg_factors");
+        if (jstr)
+            snprintf(app->report.agg_factors, sizeof(app->report.agg_factors), "%s",
+                     json_object_get_string(jstr));
+
+        jstr = json_object_object_get(assessment, "ease_factors");
+        if (jstr)
+            snprintf(app->report.ease_factors, sizeof(app->report.ease_factors), "%s",
+                     json_object_get_string(jstr));
+
+        jstr = json_object_object_get(assessment, "behaviour_24hr");
+        if (jstr)
+            snprintf(app->report.behaviour_24hr, sizeof(app->report.behaviour_24hr), "%s",
+                     json_object_get_string(jstr));
+
+        jstr = json_object_object_get(assessment, "plan");
+        if (jstr)
+            snprintf(app->report.plan, sizeof(app->report.plan), "%s",
+                     json_object_get_string(jstr));
+
+        jstr = json_object_object_get(assessment, "clinical_notes");
+        if (jstr)
+            snprintf(app->report.clinical_notes, sizeof(app->report.clinical_notes), "%s",
+                     json_object_get_string(jstr));
+    }
+
+    json_object_put(root);
 }

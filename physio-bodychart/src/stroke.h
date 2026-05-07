@@ -37,7 +37,7 @@ typedef struct {
     int    quality;         /* 0=Pain … 12=Other; see NOTE_QUALITY_COUNT */
     int    avg_intensity;   /* 0-10 */
     int    worst_intensity; /* 0-10 */
-    char   text[32];        /* e.g. "(1)C S Sh 3/7" */
+    char   text[256];       /* longer text supporting 2+ lines of description */
 } NoteAnnotation;
 
 typedef struct {

@@ -1,0 +1,83 @@
+give me key head ache differentiation ie migraine, cervicogenic, TTH
+
+Thought for 1s
+
+Based on ICHD-3 criteriaIntHeadacheSoc(IHS)+1 and clinical differentiation literature:
+Headache Differentiation: Migraine vs TTH vs CGH
+Feature	Migraine	TTH	CGH
+Classification	Primary	Primary	Secondary (to cervical dysfunction)
+Location	Unilateral (can shift)	Bilateral	Strictly unilateral, side-locked
+Pain quality	Throbbing / pulsating	Pressing / tightening (band-like)	Dull, aching — starts in neck, radiates forward
+Severity	Moderate–severe	Mild–moderate	Mild–moderate
+Duration	4–72 hrs	30 min–7 days	Hours to days
+Neck involvement	Can have neck pain (secondary)	Can have neck tension (secondary)	Neck movement provokes / reproduces it
+Nausea/vomiting	Yes (often)	No	No
+Photo/phonophobia	Both present	At most ONE of photo OR phono	Typically absent
+Aura	Possible (visual, sensory, language)	No	No
+Activity effect	Worsened by routine activity	Not aggravated	Variable
+Autonomic features	Subtle (possible)	None	None
+Key clinical test	—	—	Cervical AROM provokes headache; manual pressure on upper cervical joints reproduces pain
+Key Differentiators at a Glance
+
+Migraine over TTH:VADoDClinicalPracticeGuidelines+1
+
+    Throbbing + moderate-severe + worsened by activity = migraine
+    Both photo AND phonophobia = migraine (TTH only gets one)
+    Nausea/vomiting = migraine, not TTH
+
+CGH over migraine:PMRKnowledgeNow(AAPMR)+2
+
+    Side-locked unilateral pain (migraine can alternate sides)
+    Cervical movement or sustained posture triggers/reproduces the headache
+    Digital pressure on upper cervical joints (C1–3) reproduces familiar pain — this is the most clinically useful sign
+    No aura, no nausea, no autonomic features
+    Reduced cervical ROM typically present
+
+CGH over TTH:PMRKnowledgeNow(AAPMR)+1
+
+    TTH is bilateral; CGH is strictly unilateral
+    TTH has no neck mechanical provocation
+    CGH has a clear posterior-to-anterior radiation pattern
+
+Practical Note for Physio
+
+The flexion-rotation test (FRT) is a useful physical test for CGH — restricted and/or symptom-reproducing rotation in full flexion implicates the C1–2 segment and has reasonable sensitivity/specificity for CGH.APTAOrthopedics It won't differentiate migraine from TTH, but it will help confirm a cervicogenic source when positive.
+1.
+	
+International Headache Society (IHS)
+Reliable
+Medical Society
+IF: 4.6
+Neurology
+2.
+	
+International Classification of Headache Disorders (ICHD-3)
+Guideline
+Reliable
+Medical Evidence Synthesis & Guideline Producer
+Neurology
+3.
+	
+VA/DoD Clinical Practice Guidelines
+Guideline
+Reliable
+Medical Evidence Synthesis & Guideline Producer
+Multi-Specialty
+4.
+	
+PM&R KnowledgeNow
+Reliable
+Point-of-Care Clinical Summaries
+Rehabilitation Medicine
+5.
+	
+National Center for Biotechnology Information (NCBI)
+Journal
+Radiology
+6.
+	
+APTA Orthopedics
+Reliable
+Medical Society
+IF: 5.8
+Physiotherapy

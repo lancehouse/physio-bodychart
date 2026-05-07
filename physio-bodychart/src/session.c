@@ -10,15 +10,15 @@
 
 /* ── Export layout constants ─────────────────────────────────────────────── *
  * Quad: ant(EU×EU*2) | post(EU×EU*2) | right-top(EU/2×EU) + right-bot      *
- *       Total: 2.5EU × 2EU = 750×600 px  — tight 1:2 body ratio, no gaps.  *
- * Single: one view at SINGLE_W × SINGLE_H (1:2 tight).                      *
+ *       Total: 2.5EU × 2EU = 1000×800 px  — larger with more padding.      *
+ * Single: one view at SINGLE_W × SINGLE_H (1:2 ratio).                      *
  * EXPORT_ZOOM < 1.0 adds margin so edge strokes are never clipped.           */
-#define EU           300.0
+#define EU           400.0
 #define EXPORT_W     (EU * 2.5)
 #define EXPORT_H     (EU * 2.0)
-#define SINGLE_W     400.0
-#define SINGLE_H     800.0
-#define EXPORT_ZOOM  0.92
+#define SINGLE_W     533.0
+#define SINGLE_H     1066.0
+#define EXPORT_ZOOM  0.96
 
 typedef struct {
     BodyView view;
@@ -137,6 +137,9 @@ gboolean session_export_subj_png(AppState *app)
     char path[1024];
     session_build_path(app, "subj.png", path, sizeof(path));
 
+    AppMode saved_mode = app->current_mode;
+    app->current_mode = APP_MODE_SUBJECTIVE;
+
     double w, h;
     export_dims(app, &w, &h);
     cairo_surface_t *surf = cairo_image_surface_create(
@@ -146,12 +149,111 @@ gboolean session_export_subj_png(AppState *app)
     cairo_destroy(cr);
     cairo_status_t st = cairo_surface_write_to_png(surf, path);
     cairo_surface_destroy(surf);
+
+    app->current_mode = saved_mode;
+
     if (st != CAIRO_STATUS_SUCCESS) {
         fprintf(stderr, "session_export_subj_png: failed: %s\n",
                 cairo_status_to_string(st));
         return FALSE;
     }
     fprintf(stderr, "session_export_subj_png: %s\n", path);
+    return TRUE;
+}
+
+gboolean session_export_obj_png(AppState *app)
+{
+    if (!app->session_dir[0] || !app->session_name[0]) return FALSE;
+    char path[1024];
+    session_build_path(app, "obj.png", path, sizeof(path));
+
+    AppMode saved_mode = app->current_mode;
+    app->current_mode = APP_MODE_OBJECTIVE;
+
+    double w, h;
+    export_dims(app, &w, &h);
+    cairo_surface_t *surf = cairo_image_surface_create(
+        CAIRO_FORMAT_RGB24, (int)w, (int)h);
+    cairo_t *cr = cairo_create(surf);
+    render_all_views_export(app, cr);
+    cairo_destroy(cr);
+    cairo_status_t st = cairo_surface_write_to_png(surf, path);
+    cairo_surface_destroy(surf);
+
+    app->current_mode = saved_mode;
+
+    if (st != CAIRO_STATUS_SUCCESS) {
+        fprintf(stderr, "session_export_obj_png: failed: %s\n",
+                cairo_status_to_string(st));
+        return FALSE;
+    }
+    fprintf(stderr, "session_export_obj_png: %s\n", path);
+    return TRUE;
+}
+
+gboolean session_export_combined_png(AppState *app)
+{
+    if (!app->session_dir[0] || !app->session_name[0]) return FALSE;
+    char path[1024];
+    session_build_path(app, "combined.png", path, sizeof(path));
+
+    AppMode saved_mode = app->current_mode;
+    double w, h;
+    export_dims(app, &w, &h);
+
+    /* Create temporary surfaces for subjective and objective */
+    cairo_surface_t *surf_sx = cairo_image_surface_create(
+        CAIRO_FORMAT_RGB24, (int)w, (int)h);
+    cairo_t *cr_sx = cairo_create(surf_sx);
+    app->current_mode = APP_MODE_SUBJECTIVE;
+    render_all_views_export(app, cr_sx);
+    cairo_destroy(cr_sx);
+
+    cairo_surface_t *surf_obj = cairo_image_surface_create(
+        CAIRO_FORMAT_RGB24, (int)w, (int)h);
+    cairo_t *cr_obj = cairo_create(surf_obj);
+    app->current_mode = APP_MODE_OBJECTIVE;
+    render_all_views_export(app, cr_obj);
+    cairo_destroy(cr_obj);
+
+    /* Create final combined surface (double height) */
+    cairo_surface_t *surf = cairo_image_surface_create(
+        CAIRO_FORMAT_RGB24, (int)w, (int)(h * 2));
+    cairo_t *cr = cairo_create(surf);
+
+    /* Copy subjective to top */
+    cairo_set_source_surface(cr, surf_sx, 0, 0);
+    cairo_paint(cr);
+
+    /* Copy objective to bottom */
+    cairo_set_source_surface(cr, surf_obj, 0, h);
+    cairo_paint(cr);
+
+    /* Draw labels */
+    cairo_set_font_size(cr, 16.0);
+    cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
+    cairo_move_to(cr, 10.0, 20.0);
+    cairo_show_text(cr, "Subjective");
+
+    cairo_move_to(cr, 10.0, h + 20.0);
+    cairo_show_text(cr, "Objective");
+
+    cairo_destroy(cr);
+
+    /* Save final image */
+    cairo_status_t st = cairo_surface_write_to_png(surf, path);
+    cairo_surface_destroy(surf);
+    cairo_surface_destroy(surf_sx);
+    cairo_surface_destroy(surf_obj);
+
+    app->current_mode = saved_mode;
+
+    if (st != CAIRO_STATUS_SUCCESS) {
+        fprintf(stderr, "session_export_combined_png: failed: %s\n",
+                cairo_status_to_string(st));
+        return FALSE;
+    }
+    fprintf(stderr, "session_export_combined_png: %s\n", path);
     return TRUE;
 }
 

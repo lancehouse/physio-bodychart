@@ -1,0 +1,126 @@
+Just give me the key neural assessment tasks to do for power, reflexes and sensation, not any of the ones which double up or don't give me useful clinical information, just the top ones to do only.
+
+Thought for 1s
+
+Power — Key Myotomes
+Test	Myotome
+Hip flexion (supine, lift thigh against resistance)	L2
+Knee extension (extend against resistance)	L3–L4
+Ankle dorsiflexion (dorsiflex against resistance)	L4–L5
+Extensor hallucis longus (extend big toe against resistance)	L5
+Single-leg heel raises (plantarflexion)	S1
+Reflexes
+Test	Level
+Patellar (knee jerk)	L3–L4
+Achilles (ankle jerk)	S1–S2
+Babinski (plantar response)	UMN screen
+Sensation — Key Tests & Landmarks
+Test	What it tells you
+Light touch — medial foot (L4), dorsum foot (L5), lateral foot (S1)	Dermatomal mapping
+Vibration — great toe → medial malleolus → tibial tuberosity (proximal migration = extent of deficit)	Dorsal column integrity
+Proprioception — great toe IP joint	Dorsal column / peripheral nerve
+Pinprick — same dermatomal landmarks as light touch	Spinothalamic (small fibre)
+The combination of vibration + proprioception at the toe is the single highest-yield sensory screen — if both are intact distally, significant dorsal column or large-fibre neuropathy is unlikely.
+
+
+
+Check other sources
+
+
+
+What's the best way to document these findings?
+
+Thought for 1s
+
+
+55 sources found
+
+View sources
+
+The Australian Physiotherapy Association (APA) guidelines on clinical note writing are the most relevant authority here.
+AusPhysioAssoc(APA)
++1
+
+
+
+ Here is a practical documentation approach:
+
+Recommended Format
+A structured table or grid is the most efficient and defensible format for neuro findings. It allows rapid comparison between sides, easy re-testing at follow-up, and clear communication to other clinicians.
+AusPhysioAssoc(APA)
+
+Power
+Document using the MRC grade (0–5), bilaterally, with the myotome level:
+
+Test	L	R
+Hip flexion (L2)	5	5
+Knee extension (L3–4)	5	4
+Ankle dorsiflexion (L4–5)	5	3
+EHL / big toe extension (L5)	5	2
+Plantarflexion / heel raises (S1)	5	5
+Reflexes
+Document as grade (0–4+), bilaterally. Note Babinski separately as present/absent/equivocal:
+
+Reflex	L	R
+Patellar (L3–4)	2+	2+
+Achilles (S1–2)	2+	1+
+Babinski	Flexor	Flexor
+Sensation
+Document as N (normal), ↓ (reduced), A (absent), or ↑ (hypersensitive/allodynia) per modality, at the key dermatomal landmarks:
+
+Landmark	Dermatome	Light Touch L/R	Pinprick L/R	Vibration L/R	Proprioception L/R
+Medial foot	L4	N / N	N / ↓	N / N	N / N
+Dorsum foot	L5	N / N	N / ↓	N / ↓	N / ↓
+Lateral foot	S1	N / N	N / N	N / N	N / N
+Great toe	—	—	—	N / ↓	N / ↓
+Practical Tips
+Always document bilaterally — asymmetry is the key clinical finding
+AusPhysioAssoc(APA)
+Note reinforcement if reflexes were only obtainable with Jendrassik
+Record absent vs. not tested — omission and absence mean different things, and APA guidelines require factual, accurate notes
+AusPhysioAssoc(APA)
+Use a body chart alongside the table for sensory findings if the pattern is complex (e.g., dermatomal vs. stocking distribution)
+Timestamp re-assessments — serial neuro exams need clear dating for tracking progression or recovery
+AusPhysioAssoc(APA)
+For My Health Record uploads, ensure sensory/motor findings are written so the patient can also understand the overall picture, as APA guidelines flag patient readability as a key consideration
+AusPhysioAssoc(APA)
+
+
+UPPERLIMB:
+    
+
+Power (Myotomes)
+
+One muscle per level that is the most isolated and reliable representative:PubMedCentral(PMC)
+Level	Test	Action to resist
+C5	Deltoid	Shoulder abduction
+C6	Wrist extensors (ECRL/B)	Wrist extension
+C7	Triceps	Elbow extension
+C8	Finger flexors (FDP)	Grip / finger flexion
+T1	Interossei (first dorsal)	Finger abduction
+
+    Skip biceps for power — it's shared C5/C6 and redundant once you test deltoid and wrist ext separately.
+
+Reflexes
+
+Only three are clinically meaningful and non-redundant:PubMedCentral(PMC)+1
+Reflex	Level	Note
+Biceps	C5–6	Use fingernail-on-tendon technique
+Brachioradialis	C6	Best differentiator of C6 vs C5
+Triceps	C7	Only reliable C7 reflex
+
+    Hoffman's sign is worth adding if UMN/myelopathy is suspected (finger flick test).PubMedCentral(PMC)
+
+Sensation (Dermatomes)
+
+Pick the most isolated, discriminating spot per level — not the overlap zones:PubMedCentral(PMC)+1
+Level	Location
+C5	Lateral arm (regimental patch area)
+C6	Thumb and index finger / radial forearm
+C7	Middle finger
+C8	Little finger / ulnar hand
+T1	Medial forearm (just above elbow)
+
+Use light touch as the primary screen; add pinprick if you need to differentiate fibre type (e.g. suspected cord pathology vs root).PubMedCentral(PMC)
+
+Bottom line: This gives you a complete C5–T1 sweep with 5 power tests, 3 reflexes, and 5 sensation points — everything useful, nothing duplicated.

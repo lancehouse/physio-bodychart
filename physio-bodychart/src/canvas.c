@@ -3,6 +3,7 @@
 #include "body_outlines.h"
 #include "overlays.h"
 #include "overlay_svg.h"
+#include "obj_chart.h"
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -67,7 +68,7 @@ static void draw_stroke(cairo_t *cr, const Stroke *s, const SymptomDef *sd,
         double p_cur = s->pts[0].pressure;
         double w_cur = s->wide_mode ? (1.5 + p_cur * 8.0) : (0.5 + p_cur * 5.5);
         cairo_set_line_width(cr, w_cur);
-        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 0.50 + 0.35 * p_cur);
+        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 1.0);
         cairo_move_to(cr, s->pts[0].x, s->pts[0].y);
         for (size_t i = 1; i < n; i++) {
             double p = (s->pts[i-1].pressure + s->pts[i].pressure) * 0.5;
@@ -76,7 +77,7 @@ static void draw_stroke(cairo_t *cr, const Stroke *s, const SymptomDef *sd,
                 cairo_stroke(cr);
                 w_cur = w;
                 cairo_set_line_width(cr, w_cur);
-                cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 0.50 + 0.40 * p);
+                cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 1.0);
                 cairo_move_to(cr, s->pts[i-1].x, s->pts[i-1].y);
             }
             /* Catmull-Rom control points for segment pts[i-1] → pts[i] */
@@ -102,7 +103,7 @@ static void draw_stroke(cairo_t *cr, const Stroke *s, const SymptomDef *sd,
         for (size_t i = 0; i < n; i++) avg_p += s->pts[i].pressure;
         avg_p /= (double)n;
         cairo_set_line_width(cr, s->wide_mode ? (0.8 + avg_p * 5.0) : (0.3 + avg_p * 2.8));
-        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 0.50 + 0.40 * avg_p);
+        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 1.0);
         double dashes[2] = { 6.0, 4.0 };
         cairo_set_dash(cr, dashes, 2, 0);
         cairo_move_to(cr, s->pts[0].x, s->pts[0].y);
@@ -129,7 +130,7 @@ static void draw_stroke(cairo_t *cr, const Stroke *s, const SymptomDef *sd,
         double dot_r   = (double)app->pen_dot_radius;
         double spacing = (double)app->pen_dot_spacing;
         double dot_gap = dot_r * 2.5;  /* centre-to-centre perpendicular gap */
-        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 0.75);
+        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 1.0);
 
         /* Stamp helper macro — places cnt dots perpendicular to (nx, ny) */
         #define STAMP_DOTS(px_, py_, nx_, ny_, cnt_) do { \
@@ -186,7 +187,7 @@ static void draw_stroke(cairo_t *cr, const Stroke *s, const SymptomDef *sd,
         double spacing  = (double)app->pen_dash_spacing;
         double lw       = (double)app->pen_dash_width;
         double dash_gap = dash_len * 0.9 + lw;  /* vertical gap between stacked dashes */
-        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 0.75);
+        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 1.0);
         cairo_set_line_width(cr, lw);
 
         #define STAMP_DASHES(px_, py_, p_) do { \
@@ -231,7 +232,7 @@ static void draw_stroke(cairo_t *cr, const Stroke *s, const SymptomDef *sd,
         double spacing = (double)app->pen_x_spacing;
         double lw      = (double)app->pen_x_width;
         double x_gap   = arm * 2.6;  /* centre-to-centre perpendicular gap */
-        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 0.75);
+        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 1.0);
         cairo_set_line_width(cr, lw);
 
         #define STAMP_XS(px_, py_, nx_, ny_, cnt_) do { \
@@ -278,7 +279,7 @@ static void draw_stroke(cairo_t *cr, const Stroke *s, const SymptomDef *sd,
         double avg_p = 0.0;
         for (size_t i = 0; i < s->n_pts; i++) avg_p += s->pts[i].pressure;
         if (s->n_pts > 0) avg_p /= (double)s->n_pts;
-        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 0.75 + 0.20 * avg_p);
+        cairo_set_source_rgba(cr, sd->r, sd->g, sd->b, 1.0);
         cairo_set_line_width(cr, 1.0 + avg_p * 1.4);
         cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
         cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
@@ -499,6 +500,7 @@ static void draw_link_summary_screen(cairo_t *cr, AppState *app,
     cairo_restore(cr);
 }
 
+/* ── Legend rendering (screen-space, shows zone and point types) ───────── */
 /* ── Note annotation rendering (screen-space, fixed pixel size) ─────────── */
 static void draw_note_screen(cairo_t *cr, const NoteAnnotation *na,
                               double sx, double sy)
@@ -635,35 +637,43 @@ void canvas_render_view(AppState *app, cairo_t *cr, BodyView view,
     cairo_set_line_width(cr, 1.8);
     body_outline_draw(cr, view);
 
-    for (int i = 0; i < app->strokes->n; i++) {
-        Stroke *sk = app->strokes->strokes[i];
-        if (sk->view != (int)view) continue;
-        draw_stroke(cr, sk, &SYMPTOM_DEFS[sk->type], app);
-    }
+    if (app->current_mode == APP_MODE_OBJECTIVE) {
+        obj_chart_render_body(app, cr, (int)view);
+    } else {
+        for (int i = 0; i < app->strokes->n; i++) {
+            Stroke *sk = app->strokes->strokes[i];
+            if (sk->view != (int)view) continue;
+            draw_stroke(cr, sk, &SYMPTOM_DEFS[sk->type], app);
+        }
 
-    for (int i = 0; i < app->arrow_count; i++) {
-        if (app->arrows[i].view != (int)view) continue;
-        draw_arrow_body_space(cr, app->arrows[i].x1, app->arrows[i].y1,
-                              app->arrows[i].cx,  app->arrows[i].cy,
-                              app->arrows[i].x2,  app->arrows[i].y2);
+        for (int i = 0; i < app->arrow_count; i++) {
+            if (app->arrows[i].view != (int)view) continue;
+            draw_arrow_body_space(cr, app->arrows[i].x1, app->arrows[i].y1,
+                                  app->arrows[i].cx,  app->arrows[i].cy,
+                                  app->arrows[i].x2,  app->arrows[i].y2);
+        }
     }
 
     cairo_restore(cr);
 
-    /* Note annotations in screen space */
-    for (int i = 0; i < app->note_count; i++) {
-        const NoteAnnotation *na = &app->notes[i];
-        if (na->view != (int)view) continue;
-        draw_note_screen(cr, na,
-                         (na->bx - 100.0) * s + cx,
-                         (na->by - 200.0) * s + cy);
-    }
+    if (app->current_mode == APP_MODE_OBJECTIVE) {
+        obj_chart_render_screen(app, cr, (int)view, s, cx, cy);
+    } else {
+        /* Note annotations in screen space */
+        for (int i = 0; i < app->note_count; i++) {
+            const NoteAnnotation *na = &app->notes[i];
+            if (na->view != (int)view) continue;
+            draw_note_screen(cr, na,
+                             (na->bx - 100.0) * s + cx,
+                             (na->by - 200.0) * s + cy);
+        }
 
-    /* Link summary shown in all views */
-    if (app->link_summary_active)
-        draw_link_summary_screen(cr, app,
-                                  (app->link_summary_bx - 100.0) * s + cx,
-                                  (app->link_summary_by - 200.0) * s + cy);
+        /* Link summary shown in all views */
+        if (app->link_summary_active)
+            draw_link_summary_screen(cr, app,
+                                      (app->link_summary_bx - 100.0) * s + cx,
+                                      (app->link_summary_by - 200.0) * s + cy);
+    }
 }
 
 /* ── Committed-stroke cache management ────────────────────────────────────── *
@@ -940,7 +950,7 @@ static void on_stylus_down(GtkGestureStylus *gs, double x, double y,
         return;
     }
 
-    /* ── Any tool (Sx mode): drag existing notes/link-summary if hit ── */
+    /* ── Any tool (Sx mode): drag existing notes/link-summary/legend if hit ── */
     if (app->current_mode == APP_MODE_SUBJECTIVE) {
         double bx, by;
         screen_to_body(cd, x, y, &bx, &by);
@@ -1127,8 +1137,8 @@ static void on_stylus_up(GtkGestureStylus *gs, double x, double y,
 
     /* Clear note/link drag (any tool) */
     if (app->note_drag_idx >= 0 || app->link_drag_active) {
-        app->note_drag_idx    = -1;
-        app->link_drag_active = FALSE;
+        app->note_drag_idx      = -1;
+        app->link_drag_active   = FALSE;
         gtk_widget_queue_draw(cd->da);
         return;
     }
@@ -1349,8 +1359,8 @@ static void on_drag_end(GtkGestureDrag *gd, double dx, double dy, gpointer d)
 
     /* Clear note/link drag (any tool) */
     if (app->note_drag_idx >= 0 || app->link_drag_active) {
-        app->note_drag_idx    = -1;
-        app->link_drag_active = FALSE;
+        app->note_drag_idx      = -1;
+        app->link_drag_active   = FALSE;
         gtk_widget_queue_draw(cd->da);
         return;
     }

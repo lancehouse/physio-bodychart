@@ -1,0 +1,11 @@
+# Meson build directory
+build/
+
+# Claude Code local settings
+.claude/
+
+# Editor / IDE
+.vscode/
+*.swp
+*~
+.DS_Store

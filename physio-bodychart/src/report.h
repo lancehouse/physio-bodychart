@@ -12,6 +12,10 @@ typedef struct {
 } NoteSubjFields;
 
 typedef struct {
+    char          history[REPORT_SECTION_LEN];
+    char          agg_factors[REPORT_NOTE_FIELD_LEN];
+    char          ease_factors[REPORT_NOTE_FIELD_LEN];
+    char          behaviour_24hr[REPORT_NOTE_FIELD_LEN];
     char          assessment[REPORT_SECTION_LEN];
     char          plan[REPORT_SECTION_LEN];
     char          clinical_notes[REPORT_SECTION_LEN];
