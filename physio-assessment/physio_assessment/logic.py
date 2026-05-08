@@ -1,7 +1,21 @@
 """Clinical logic layer - pure functions, no UI imports, no persistence."""
 
 from typing import List, Dict, Tuple, Optional
-from models import Session, OutcomeMeasureResult
+from pathlib import Path
+from .models import Session, OutcomeMeasureResult
+
+
+def get_bodychart_command(session_path: Path) -> list:
+    """
+    Generate command line to launch GTK body chart with this session.
+
+    Args:
+        session_path: Path to session JSON file
+
+    Returns:
+        List ready for subprocess.Popen() or similar
+    """
+    return ["physio-bodychart", "--session", str(session_path)]
 
 
 def generate_report_paragraph(section: str, session_data: Session) -> str:

@@ -53,7 +53,15 @@
       "Bash(mv DOCUMENTS_INDEX.txt docs/)",
       "Bash(mv GITHUB_UPDATE_QUICK.txt docs/)",
       "Bash(cat)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(git commit *)",
+      "Bash(python -m py_compile physio_assessment/tui.py physio_assessment/storage.py physio_assessment/main.py)",
+      "Bash(python -c \"from physio_assessment.main import main; print\\('Imports successful'\\)\")",
+      "Bash(python *)",
+      "Bash(./build/physio-bodychart --session /tmp/test_session/test_session.json)",
+      "Bash(pkill -f \"physio-bodychart --session\")",
+      "Bash(pkill physio-bodychart *)",
+      "Bash(git add *)"
     ]
   }
 }

@@ -68,6 +68,11 @@ This document defines the JSON schema that synchronizes the GTK body chart and P
   "created": 1714953600,
   "modified": 1714954200,
   
+  "launched_by": "tui",
+  "workflow_stage": "03_objective",
+  "body_chart_requested": false,
+  "body_chart_complete": true,
+  
   "ui": {
     "layout_mode": 0,
     "right_slot_views": [0, 1]
@@ -168,6 +173,18 @@ This document defines the JSON schema that synchronizes the GTK body chart and P
   }
 }
 ```
+
+---
+
+## Workflow Fields (v2+)
+
+**New in Schema Version 2:**
+- `launched_by` (string) — Which app created this session: `"tui"`, `"gtk"`, or `"standalone"`
+- `workflow_stage` (string) — Last completed section identifier (e.g., `"01_consent"`, `"03_objective"`)
+- `body_chart_requested` (boolean) — Whether TUI has requested GTK to launch (used for handoff)
+- `body_chart_complete` (boolean) — Whether body chart has been completed in this session
+
+**Purpose:** Enable bidirectional workflow between TUI (primary entry point) and GTK (body chart component).
 
 ---
 

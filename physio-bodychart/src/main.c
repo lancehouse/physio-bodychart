@@ -8,17 +8,47 @@
 #include "overlay_svg.h"
 #include "settings.h"
 #include "input.h"
+#include "persistence.h"
+
+/* Global session path if provided via --session argument */
+static char g_session_path[512] = "";
 
 static void on_activate(GtkApplication *app, gpointer user_data)
 {
     AppState *state = user_data;
-    window_show_launch(state, app);
+
+    /* If --session was provided, load that session directly */
+    if (g_session_path[0] != '\0') {
+        if (persistence_load(state, g_session_path)) {
+            persistence_monitor_start(state);
+            window_create(state, app);
+        } else {
+            /* Failed to load; show launch dialog as fallback */
+            window_show_launch(state, app);
+        }
+    } else {
+        /* No session provided; show launch dialog */
+        window_show_launch(state, app);
+    }
 }
 
 int main(int argc, char *argv[])
 {
     svg_views_init();
     overlay_svg_init();
+
+    /* Parse --session argument before other argument processing */
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp(argv[i], "--session") == 0) {
+            strncpy(g_session_path, argv[i + 1], sizeof(g_session_path) - 1);
+            /* Shift remaining args to remove --session and its value */
+            for (int j = i; j < argc - 2; j++) {
+                argv[j] = argv[j + 2];
+            }
+            argc -= 2;
+            break;  /* Only one --session argument expected */
+        }
+    }
 
     /* Initialise app state */
     AppState state;
