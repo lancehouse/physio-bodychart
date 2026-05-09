@@ -705,6 +705,8 @@ class BarriersSection(BaseSection):
     # Events
     # ------------------------------------------------------------------
 
+    @on(YesNoField.Changed)
+    @on(CycleField.Changed)
     @on(Input.Changed, selector="Input")
     @on(TextArea.Changed, selector="TextArea")
     def _on_field_changed(self) -> None:

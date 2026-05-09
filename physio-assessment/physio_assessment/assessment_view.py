@@ -7,6 +7,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult, on
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.message import Message
 from textual.widgets import Button, Label, Static
 
 from .sections.consent import ConsentSection
@@ -17,14 +18,18 @@ from .sections.outcome_measures import OutcomeMeasuresSection
 from .sections.diagnosis import DiagnosisSection
 from .sections.barriers import BarriersSection
 from .sections.placeholder import PlaceholderSection
+from .sections.scratchpad import ScratchpadSection
 from .storage import (
-    save_consent, load_consent,
-    save_subjective, load_subjective,
-    save_medical, load_medical,
-    save_pain_classification, load_pain_classification,
-    save_outcome_measures, load_outcome_measures,
-    save_diagnosis, load_diagnosis,
-    save_barriers, load_barriers,
+    load_consent,
+    load_subjective,
+    load_medical,
+    load_pain_classification,
+    load_outcome_measures,
+    load_diagnosis,
+    load_barriers,
+    load_scratchpad,
+    save_all_sections,
+    save_raw_report,
 )
 
 
@@ -72,6 +77,7 @@ class SectionNav(Static):
         "05_outcome_measures": "05 Outcomes",
         "06_diagnosis": "06 Diagnosis",
         "07_barriers": "07 Barriers",
+        "scratchpad": "📝 Notes",
     }
 
     def __init__(self, on_section_selected: callable, **kwargs):
@@ -81,7 +87,7 @@ class SectionNav(Static):
         self.section_indicators = {}  # section_id -> completion bool
 
     def compose(self) -> ComposeResult:
-        """Create navigation buttons for all 7 sections."""
+        """Create navigation buttons for all sections."""
         for section_id in [
             "01_consent",
             "02_subjective",
@@ -90,6 +96,7 @@ class SectionNav(Static):
             "05_outcome_measures",
             "06_diagnosis",
             "07_barriers",
+            "scratchpad",
         ]:
             label = self.SECTION_LABELS.get(section_id, section_id)
             btn = Button(label, id=f"nav_{section_id}")
@@ -181,7 +188,7 @@ class AssessmentView(Container):
 
     def on_mount(self) -> None:
         """Initialize after mounting."""
-        # Create all 7 section instances
+        # Create all section instances
         self.sections = {
             "01_consent": ConsentSection(id="section_01_consent"),
             "02_subjective": SubjectiveSection(id="section_02_subjective"),
@@ -190,6 +197,7 @@ class AssessmentView(Container):
             "05_outcome_measures": OutcomeMeasuresSection(id="section_05_outcome_measures"),
             "06_diagnosis": DiagnosisSection(id="section_06_diagnosis"),
             "07_barriers": BarriersSection(id="section_07_barriers"),
+            "scratchpad": ScratchpadSection(id="section_scratchpad"),
         }
 
         # Mount all sections to content area
@@ -267,6 +275,14 @@ class AssessmentView(Container):
             if isinstance(dx_data, dict):
                 dx_section.load(dx_data)
 
+        # Load scratchpad section
+        sp_data = data.get("assessment", {}).get("scratchpad", {})
+        if "scratchpad" in self.sections:
+            sp_section = self.sections["scratchpad"]
+            sp_section.session_file = session_file
+            if isinstance(sp_data, dict):
+                sp_section.load(sp_data)
+
         # Update nav indicators and medical tab color
         self._refresh_nav_indicators(data)
         self._update_medical_tab_color()
@@ -338,6 +354,7 @@ class AssessmentView(Container):
         """Schedule a debounced save after 2 seconds of inactivity."""
         if self._save_task:
             self._save_task.cancel()
+        self.post_message(self.SaveStateChanged("pending"))
 
         async def delayed_save():
             await asyncio.sleep(2.0)
@@ -346,93 +363,74 @@ class AssessmentView(Container):
         self._save_task = asyncio.create_task(delayed_save())
 
     async def _do_save(self) -> None:
-        """Execute the save for the active section."""
+        """Collect ALL sections and write the complete assessment in one atomic pass."""
         if not self.session_file:
             return
 
-        if self.active_section_id == "01_consent":
-            consent_section = self.sections["01_consent"]
-            consent_data = consent_section.collect()
-            save_consent(self.session_file, consent_data)
+        self.post_message(self.SaveStateChanged("saving"))
 
-            # Reload section indicators
-            data = json.loads(Path(self.session_file).read_text())
-            self._refresh_nav_indicators(data)
+        # Section ID → key used in assessment JSON block
+        _SEC_KEYS = [
+            ("01_consent",           "consent"),
+            ("02_subjective",        "subjective"),
+            ("03_medical",           "medical"),
+            ("04_pain_classification", "pain_classification"),
+            ("05_outcome_measures",  "outcome_measures"),
+            ("06_diagnosis",         "diagnosis"),
+            ("07_barriers",          "barriers"),
+            ("scratchpad",           "scratchpad"),
+        ]
 
-        elif self.active_section_id == "02_subjective":
-            subjective_section = self.sections["02_subjective"]
-            subjective_data = subjective_section.collect()
-            save_subjective(self.session_file, subjective_data)
+        assessment_data: dict = {}
+        sections_complete: dict[str, bool] = {}
 
-            data = json.loads(Path(self.session_file).read_text())
-            self._refresh_nav_indicators(data)
+        for section_id, json_key in _SEC_KEYS:
+            section = self.sections.get(section_id)
+            if section is None:
+                continue
+            assessment_data[json_key] = section.collect()
+            if section_id != "scratchpad":
+                sections_complete[section_id] = section.is_complete()
 
-        elif self.active_section_id == "03_medical":
-            medical_section = self.sections["03_medical"]
-            medical_data = medical_section.collect()
-            save_medical(self.session_file, medical_data)
+        save_all_sections(self.session_file, assessment_data, sections_complete)
 
-            data = json.loads(Path(self.session_file).read_text())
-            self._refresh_nav_indicators(data)
-            self._update_medical_tab_color()
+        # Update nav indicators from freshly written file
+        data = json.loads(Path(self.session_file).read_text())
+        self._refresh_nav_indicators(data)
+        self._update_medical_tab_color()
 
-        elif self.active_section_id == "04_pain_classification":
-            pain_section = self.sections["04_pain_classification"]
-            pain_data = pain_section.collect()
-            save_pain_classification(self.session_file, pain_data)
+        # Regenerate raw report (obsidian-style continuous write)
+        save_raw_report(self.session_file)
 
-            data = json.loads(Path(self.session_file).read_text())
-            self._refresh_nav_indicators(data)
+        self.post_message(self.SaveStateChanged("saved"))
 
-        elif self.active_section_id == "05_outcome_measures":
-            om_section = self.sections["05_outcome_measures"]
-            om_data = om_section.collect()
-            save_outcome_measures(self.session_file, om_data)
+    class SaveStateChanged(Message):
+        """Posted when save state changes: 'pending', 'saving', or 'saved'."""
+        def __init__(self, state: str) -> None:
+            super().__init__()
+            self.state = state
 
-            data = json.loads(Path(self.session_file).read_text())
-            self._refresh_nav_indicators(data)
-
-        elif self.active_section_id == "06_diagnosis":
-            dx_section = self.sections["06_diagnosis"]
-            dx_data = dx_section.collect()
-            save_diagnosis(self.session_file, dx_data)
-
-            data = json.loads(Path(self.session_file).read_text())
-            self._refresh_nav_indicators(data)
-
-        elif self.active_section_id == "07_barriers":
-            br_section = self.sections["07_barriers"]
-            br_data = br_section.collect()
-            save_barriers(self.session_file, br_data)
-
-            data = json.loads(Path(self.session_file).read_text())
-            self._refresh_nav_indicators(data)
-
-    def on_section_01_consent_field_changed(self) -> None:
-        """Handle field changes from ConsentSection."""
+    def on_consent_section_field_changed(self) -> None:
         self._schedule_save()
 
-    def on_section_02_subjective_field_changed(self) -> None:
-        """Handle field changes from SubjectiveSection."""
+    def on_subjective_section_field_changed(self) -> None:
         self._schedule_save()
 
-    def on_section_03_medical_field_changed(self) -> None:
-        """Handle field changes from MedicalSection."""
+    def on_medical_section_field_changed(self) -> None:
         self._schedule_save()
         self._update_medical_tab_color()
 
-    def on_section_04_pain_classification_field_changed(self) -> None:
-        """Handle field changes from PainClassificationSection."""
+    def on_pain_classification_section_field_changed(self) -> None:
         self._schedule_save()
 
-    def on_section_05_outcome_measures_field_changed(self) -> None:
-        """Handle field changes from OutcomeMeasuresSection."""
+    def on_outcome_measures_section_field_changed(self) -> None:
         self._schedule_save()
 
-    def on_section_06_diagnosis_field_changed(self) -> None:
-        """Handle field changes from DiagnosisSection."""
+    def on_diagnosis_section_field_changed(self) -> None:
         self._schedule_save()
 
-    def on_section_07_barriers_field_changed(self) -> None:
-        """Handle field changes from BarriersSection."""
+    def on_barriers_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_scratchpad_section_field_changed(self) -> None:
         self._schedule_save()

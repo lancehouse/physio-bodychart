@@ -73,7 +73,11 @@ class YesNoField(Container):
                 self.set_value(None)
             else:
                 self.set_value(True)
+            self.post_message(YesNoField.Changed())
             event.stop()
+
+    class Changed(Message):
+        pass
 
 
 class ConsentSection(BaseSection):
@@ -296,7 +300,7 @@ class ConsentSection(BaseSection):
             # Widget not yet mounted
             pass
 
-    @on(Button.Pressed, selector="Button")
+    @on(YesNoField.Changed)
     @on(Input.Changed, selector="Input")
     @on(TextArea.Changed, selector="TextArea")
     def _on_field_changed(self) -> None:

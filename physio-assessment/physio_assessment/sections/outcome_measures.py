@@ -153,7 +153,11 @@ class CycleField(Static):
         if event.button.id == f"{self._field_id}_btn":
             self._idx = (self._idx + 1) % len(self._options)
             self._refresh()
+            self.post_message(CycleField.Changed())
             event.stop()
+
+    class Changed(Message):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +704,7 @@ class OutcomeMeasuresSection(BaseSection):
     # Events
     # ------------------------------------------------------------------
 
+    @on(CycleField.Changed)
     @on(Input.Changed, selector="Input")
     @on(TextArea.Changed, selector="TextArea")
     def _on_field_changed(self) -> None:

@@ -25,6 +25,7 @@ from .watcher import BodyChartWatcher
 from .storage import (
     load_assessment, save_assessment, list_sessions, create_new_session,
     read_gtk_pid, read_tui_socket, write_focus_signal, export_session_report,
+    save_raw_report,
 )
 from .assessment_view import AssessmentView
 
@@ -230,7 +231,9 @@ class PhysioAssessmentTUI(Container):
     BINDINGS = [
         Binding("ctrl+s", "save",          "Save",       show=True),
         Binding("ctrl+b", "open_bodychart","Body Chart", show=True),
-        Binding("ctrl+e", "export",        "Export",     show=True),
+        Binding("ctrl+e", "export",        "Export MD",  show=True),
+        Binding("ctrl+r", "export_raw",    "Raw Report", show=True),
+        Binding("ctrl+n", "scratchpad",    "Notes",      show=True),
     ]
 
     DEFAULT_CSS = """
@@ -402,3 +405,56 @@ class PhysioAssessmentTUI(Container):
             self._show_status(f"Exported → {name}", seconds=4.0)
         else:
             self._show_status("Export failed — check logs")
+
+    def action_export_raw(self) -> None:
+        """Ctrl+R — flush active section and regenerate raw report in session folder."""
+        if not self.current_session_file:
+            self._show_status("No session loaded")
+            return
+
+        async def _save_then_notify():
+            assessment_view = self.query_one("#assessment_view", AssessmentView)
+            await assessment_view._do_save()
+            out = save_raw_report(self.current_session_file)
+            if out:
+                self._show_status(f"Raw report → {Path(out).name}", seconds=4.0)
+            else:
+                self._show_status("Raw report write failed — check logs")
+
+        asyncio.create_task(_save_then_notify())
+
+    def action_scratchpad(self) -> None:
+        """Ctrl+N — jump to the scratchpad section."""
+        if not self.current_session_file:
+            self._show_status("No session loaded")
+            return
+        assessment_view = self.query_one("#assessment_view", AssessmentView)
+        assessment_view._show_section("scratchpad")
+
+    # ------------------------------------------------------------------
+    # Save state indicator
+    # ------------------------------------------------------------------
+
+    def on_assessment_view_save_state_changed(
+        self, event: AssessmentView.SaveStateChanged
+    ) -> None:
+        """Update status bar to reflect auto-save state."""
+        if event.state == "pending":
+            try:
+                self.query_one("#tui_status", Static).update("Unsaved changes")
+                if self._status_timer:
+                    self._status_timer.cancel()
+                    self._status_timer = None
+            except Exception:
+                pass
+        elif event.state == "saving":
+            try:
+                self.query_one("#tui_status", Static).update("Saving…")
+                if self._status_timer:
+                    self._status_timer.cancel()
+                    self._status_timer = None
+            except Exception:
+                pass
+        elif event.state == "saved":
+            now = datetime.now().strftime("%H:%M")
+            self._show_status(f"Saved {now}", seconds=8.0)

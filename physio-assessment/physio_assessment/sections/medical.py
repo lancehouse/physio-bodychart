@@ -113,7 +113,11 @@ class LikelihoodField(Static):
         if event.button.id == f"{self._field_id}_btn":
             idx = self._CYCLE.index(self._value)
             self.set_value(self._CYCLE[(idx + 1) % len(self._CYCLE)])
+            self.post_message(LikelihoodField.Changed())
             event.stop()
+
+    class Changed(Message):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -656,7 +660,8 @@ class MedicalSection(BaseSection):
     # Events
     # ------------------------------------------------------------------
 
-    @on(Button.Pressed, selector="Button")
+    @on(YesNoField.Changed)
+    @on(LikelihoodField.Changed)
     @on(Input.Changed, selector="Input")
     @on(TextArea.Changed, selector="TextArea")
     def _on_field_changed(self) -> None:
