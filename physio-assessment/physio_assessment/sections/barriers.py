@@ -510,11 +510,15 @@ class BarriersSection(BaseSection):
         except Exception:
             return
 
-        med = data.get("assessment", {}).get("medical", {})
-        subj = data.get("assessment", {}).get("subjective", {})
-        pc = data.get("assessment", {}).get("pain_classification", {})
-        om = data.get("assessment", {}).get("outcome_measures", {})
-        dx = data.get("assessment", {}).get("diagnosis", {})
+        def _sec(key):
+            v = data.get("assessment", {}).get(key)
+            return v if isinstance(v, dict) else {}
+
+        med  = _sec("medical")
+        subj = _sec("subjective")
+        pc   = _sec("pain_classification")
+        om   = _sec("outcome_measures")
+        dx   = _sec("diagnosis")
 
         def _set(badge_id: str, lines: list[str], urgent: bool = False) -> None:
             try:

@@ -551,8 +551,12 @@ class OutcomeMeasuresSection(BaseSection):
         except Exception:
             return
 
-        med  = data.get("assessment", {}).get("medical", {})
-        subj = data.get("assessment", {}).get("subjective", {})
+        def _sec(key):
+            v = data.get("assessment", {}).get(key)
+            return v if isinstance(v, dict) else {}
+
+        med  = _sec("medical")
+        subj = _sec("subjective")
 
         def _set(badge_id: str, lines: list[str], urgent: bool = False) -> None:
             try:

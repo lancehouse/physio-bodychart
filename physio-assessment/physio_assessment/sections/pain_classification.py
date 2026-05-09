@@ -431,8 +431,12 @@ class PainClassificationSection(BaseSection):
         except Exception:
             return
 
-        med = data.get("assessment", {}).get("medical", {})
-        subj_assessment = data.get("assessment", {}).get("subjective", {})
+        def _sec(key):
+            v = data.get("assessment", {}).get(key)
+            return v if isinstance(v, dict) else {}
+
+        med = _sec("medical")
+        subj_assessment = _sec("subjective")
 
         def _set(badge_id: str, lines: list[str]) -> None:
             try:

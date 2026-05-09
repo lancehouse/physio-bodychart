@@ -269,10 +269,10 @@ class ConsentSection(BaseSection):
                 "preferred_name": self.query_one("#preferred_name_input", Input).value,
                 "pain_multifactorial_explained": self.query_one("#framing_pain_multifactorial", YesNoField).get_value(),
                 "education_as_treatment_explained": self.query_one("#framing_education_treatment", YesNoField).get_value(),
-                "patient_expectations": self.query_one("#patient_expectations", Input).value,
+                "patient_expectations": self.query_one("#patient_expectations", TextArea).text,
                 "reason_for_attending": self.query_one("#reason_for_attending", TextArea).text,
                 "cause_understanding": self.query_one("#cause_understanding", YesNoField).get_value(),
-                "cause_understanding_detail": self.query_one("#cause_understanding_detail", Input).value,
+                "cause_understanding_detail": self.query_one("#cause_understanding_detail", TextArea).text,
                 "prognosis_expectations": self.query_one("#prognosis_expectations", TextArea).text,
                 "treatment_preference": self.query_one("#treatment_preference", TextArea).text,
             }
