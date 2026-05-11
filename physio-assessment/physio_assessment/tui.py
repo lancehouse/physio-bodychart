@@ -285,7 +285,11 @@ class PhysioAssessmentTUI(Container):
 
     async def load_session_from_path(self, session_file: str) -> None:
         try:
-            data = json.loads(Path(session_file).read_text())
+            p = Path(session_file)
+            # File may not exist yet if GTK spawned us before its first save.
+            # Use empty data so we can still set session_file and accept saves.
+            data = json.loads(p.read_text()) if p.exists() else {}
+
             self.current_session_file = session_file
 
             header = self.query_one("#session_header", SessionHeader)
@@ -300,7 +304,6 @@ class PhysioAssessmentTUI(Container):
             assessment_view = self.query_one("#assessment_view", AssessmentView)
             assessment_view.load_session(session_file, data)
 
-            # Announce our PID now that we have a confirmed session
             from .storage import write_tui_pid
             write_tui_pid(os.getpid())
 

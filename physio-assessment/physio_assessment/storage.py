@@ -1037,6 +1037,7 @@ def save_all_sections(
             data["sections_complete"][section_id] = complete
             data["sections_last_modified"][section_id] = now
 
+        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, indent=2))
         tmp.replace(path)
