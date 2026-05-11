@@ -196,7 +196,15 @@ gboolean persistence_save(AppState *app)
     if (mkdir(app->session_dir, 0755) != 0 && errno != EEXIST)
         return FALSE;
 
-    json_object *root = json_object_new_object();
+    /*
+     * Read the existing file as the base so that Python TUI assessment fields
+     * (consent, subjective exam, medical, pain_classification, outcome_measures,
+     * diagnosis, barriers, scratchpad, sections_complete, sections_last_modified)
+     * are preserved when GTK saves body chart strokes or other GTK-owned data.
+     * GTK only updates the keys it owns; all others pass through untouched.
+     */
+    json_object *root = json_object_from_file(app->session_file);
+    if (!root) root = json_object_new_object();
 
     /* Metadata */
     json_object_object_add(root, "version",       json_object_new_int(2));
@@ -240,8 +248,17 @@ gboolean persistence_save(AppState *app)
     json_object_object_add(root, "neuro",
         json_object_new_object());
 
-    /* Assessment block (Python-owned) */
-    json_object *assess = json_object_new_object();
+    /*
+     * Assessment block — GTK owns the legacy flat fields only.
+     * Get the existing assessment object (which may contain Python TUI nested
+     * fields) and update only GTK-owned keys in place. This leaves all Python
+     * TUI sub-dicts (consent, subjective, medical, …) untouched.
+     */
+    json_object *assess = NULL;
+    if (!json_object_object_get_ex(root, "assessment", &assess)) {
+        assess = json_object_new_object();
+        json_object_object_add(root, "assessment", assess);
+    }
     json_object_object_add(assess, "history",
         json_object_new_string(app->report.history));
     json_object_object_add(assess, "agg_factors",
@@ -258,7 +275,6 @@ gboolean persistence_save(AppState *app)
         json_object_new_string(app->report.clinical_notes));
     json_object_object_add(assess, "modified",
         json_object_new_int64((int64_t)time(NULL)));
-    json_object_object_add(root, "assessment", assess);
 
     json_object *rpt = json_object_new_object();
     json_object_object_add(rpt, "assessment",
