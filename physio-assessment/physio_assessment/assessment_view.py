@@ -30,6 +30,7 @@ from .storage import (
     load_scratchpad,
     save_all_sections,
     save_raw_report,
+    assessment_path,
 )
 
 
@@ -224,43 +225,58 @@ class AssessmentView(Container):
 
         self.session_file = session_file
 
+        # Prefer TUI-owned _assessment.json; fall back to embedded assessment block
+        # for old sessions that predate the split architecture.
+        assess_p = assessment_path(session_file)
+        if assess_p.exists():
+            try:
+                assess_file = json.loads(assess_p.read_text())
+                assessment = assess_file.get("assessment", {})
+                nav_data = assess_file  # sections_complete lives here
+            except Exception:
+                assessment = data.get("assessment", {})
+                nav_data = data
+        else:
+            assessment = data.get("assessment", {})
+            nav_data = data
+
         # Load consent section
-        consent_data = data.get("assessment", {}).get("consent", {})
+        consent_data = assessment.get("consent", {})
         if "01_consent" in self.sections:
             consent_section = self.sections["01_consent"]
             consent_section.session_file = session_file
             consent_section.load(consent_data)
 
         # Load subjective section
-        subjective_data = data.get("assessment", {}).get("subjective", {})
+        subjective_data = assessment.get("subjective", {})
         if "02_subjective" in self.sections:
             subjective_section = self.sections["02_subjective"]
             subjective_section.session_file = session_file
             subjective_section.load(subjective_data)
 
         # Load medical section
-        medical_data = data.get("assessment", {}).get("medical", {})
+        medical_data = assessment.get("medical", {})
         if "03_medical" in self.sections:
             medical_section = self.sections["03_medical"]
             medical_section.session_file = session_file
             medical_section.load(medical_data)
 
         # Load pain classification section
-        pain_data = data.get("assessment", {}).get("pain_classification", {})
+        pain_data = assessment.get("pain_classification", {})
         if "04_pain_classification" in self.sections:
             pain_section = self.sections["04_pain_classification"]
             pain_section.session_file = session_file
             pain_section.load(pain_data)
 
         # Load outcome measures section
-        om_data = data.get("assessment", {}).get("outcome_measures", {})
+        om_data = assessment.get("outcome_measures", {})
         if "05_outcome_measures" in self.sections:
             om_section = self.sections["05_outcome_measures"]
             om_section.session_file = session_file
             om_section.load(om_data)
 
         # Load barriers section
-        br_data = data.get("assessment", {}).get("barriers", {})
+        br_data = assessment.get("barriers", {})
         if "07_barriers" in self.sections:
             br_section = self.sections["07_barriers"]
             br_section.session_file = session_file
@@ -268,7 +284,7 @@ class AssessmentView(Container):
                 br_section.load(br_data)
 
         # Load diagnosis section
-        dx_data = data.get("assessment", {}).get("diagnosis", {})
+        dx_data = assessment.get("diagnosis", {})
         if "06_diagnosis" in self.sections:
             dx_section = self.sections["06_diagnosis"]
             dx_section.session_file = session_file
@@ -276,7 +292,7 @@ class AssessmentView(Container):
                 dx_section.load(dx_data)
 
         # Load scratchpad section
-        sp_data = data.get("assessment", {}).get("scratchpad", {})
+        sp_data = assessment.get("scratchpad", {})
         if "scratchpad" in self.sections:
             sp_section = self.sections["scratchpad"]
             sp_section.session_file = session_file
@@ -284,7 +300,7 @@ class AssessmentView(Container):
                 sp_section.load(sp_data)
 
         # Update nav indicators and medical tab color
-        self._refresh_nav_indicators(data)
+        self._refresh_nav_indicators(nav_data)
         self._update_medical_tab_color()
 
     def _show_section(self, section_id: str) -> None:
@@ -394,9 +410,10 @@ class AssessmentView(Container):
 
         save_all_sections(self.session_file, assessment_data, sections_complete)
 
-        # Update nav indicators from freshly written file
-        data = json.loads(Path(self.session_file).read_text())
-        self._refresh_nav_indicators(data)
+        # Update nav indicators from freshly written _assessment.json
+        assess_p = assessment_path(self.session_file)
+        nav_data = json.loads(assess_p.read_text()) if assess_p.exists() else {}
+        self._refresh_nav_indicators(nav_data)
         self._update_medical_tab_color()
 
         # Regenerate raw report (obsidian-style continuous write)

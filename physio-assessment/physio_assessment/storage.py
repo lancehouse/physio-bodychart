@@ -88,6 +88,12 @@ def load_session_current() -> Optional[dict]:
         return None
 
 
+def assessment_path(session_file: str) -> Path:
+    """Return the TUI-owned _assessment.json path for a given GTK _session.json path."""
+    p = Path(session_file)
+    return p.parent / p.name.replace("_session.json", "_assessment.json")
+
+
 def list_sessions() -> list[dict]:
     """
     List all assessment sessions from GTK storage directory.
@@ -113,6 +119,17 @@ def list_sessions() -> list[dict]:
 
         try:
             data = json.loads(session_file.read_text())
+
+            # Merge TUI assessment data from separate _assessment.json if present
+            assess_p = assessment_path(str(session_file))
+            if assess_p.exists():
+                try:
+                    assess_data = json.loads(assess_p.read_text())
+                    data["assessment"] = assess_data.get("assessment", data.get("assessment", {}))
+                    data["sections_complete"] = assess_data.get("sections_complete", {})
+                    data["sections_last_modified"] = assess_data.get("sections_last_modified", {})
+                except Exception:
+                    pass
 
             # Extract session metadata
             session = {
@@ -718,10 +735,20 @@ def export_session_report(session_file: str) -> str:
     Returns the output path, or empty string on failure.
     """
     try:
-        data = json.loads(Path(session_file).read_text())
+        data = json.loads(Path(session_file).read_text()) if Path(session_file).exists() else {}
     except Exception as e:
         logger.error(f"export_session_report: {e}")
         return ""
+
+    # Overlay TUI assessment data from the separate _assessment.json
+    assess_p = assessment_path(session_file)
+    if assess_p.exists():
+        try:
+            assess_data = json.loads(assess_p.read_text())
+            data["assessment"] = assess_data.get("assessment", data.get("assessment", {}))
+            data.setdefault("sections_complete", assess_data.get("sections_complete", {}))
+        except Exception:
+            pass
 
     session_dir  = Path(session_file).parent
     session_name = data.get("session_name", "session")
@@ -1018,7 +1045,8 @@ def save_all_sections(
       consent, subjective, medical, pain_classification,
       outcome_measures, diagnosis, barriers, scratchpad
     """
-    path = Path(session_file)
+    # Write to TUI-owned _assessment.json — GTK never touches this file.
+    path = assessment_path(session_file)
     try:
         data = json.loads(path.read_text()) if path.exists() else {}
 
@@ -1042,10 +1070,10 @@ def save_all_sections(
         tmp.write_text(json.dumps(data, indent=2))
         tmp.replace(path)
 
-        logger.debug(f"Saved all sections to {session_file}")
+        logger.debug(f"Saved all sections to {path}")
         return True
     except Exception as e:
-        logger.error(f"Failed to save all sections to {session_file}: {e}")
+        logger.error(f"Failed to save all sections to {path}: {e}")
         return False
 
 
@@ -2199,10 +2227,20 @@ def save_raw_report(session_file: str) -> str:
     Returns the output path, or empty string on failure.
     """
     try:
-        data = json.loads(Path(session_file).read_text())
+        data = json.loads(Path(session_file).read_text()) if Path(session_file).exists() else {}
     except Exception as e:
         logger.error(f"save_raw_report: failed to read session: {e}")
         return ""
+
+    # Overlay TUI assessment data from the separate _assessment.json
+    assess_p = assessment_path(session_file)
+    if assess_p.exists():
+        try:
+            assess_data = json.loads(assess_p.read_text())
+            data["assessment"] = assess_data.get("assessment", data.get("assessment", {}))
+            data.setdefault("sections_complete", assess_data.get("sections_complete", {}))
+        except Exception:
+            pass
 
     content = export_raw_report(data)
     session_name = data.get("session_name", "session")
