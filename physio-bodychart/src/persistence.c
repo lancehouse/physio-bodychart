@@ -197,14 +197,28 @@ gboolean persistence_save(AppState *app)
         return FALSE;
 
     /*
-     * Read the existing file as the base so that Python TUI assessment fields
-     * (consent, subjective exam, medical, pain_classification, outcome_measures,
-     * diagnosis, barriers, scratchpad, sections_complete, sections_last_modified)
-     * are preserved when GTK saves body chart strokes or other GTK-owned data.
-     * GTK only updates the keys it owns; all others pass through untouched.
+     * Load the existing file so we can preserve Python TUI assessment fields
+     * (consent, subjective, medical, pain_classification, outcome_measures,
+     * diagnosis, barriers, scratchpad, sections_complete, sections_last_modified).
+     * We extract those fields, then build a fresh JSON tree (as before) and
+     * re-inject them.  This avoids in-place mutation of borrowed json-c objects.
      */
-    json_object *root = json_object_from_file(app->session_file);
-    if (!root) root = json_object_new_object();
+    json_object *existing      = json_object_from_file(app->session_file);
+    json_object *existing_assess = NULL;
+    if (existing)
+        json_object_object_get_ex(existing, "assessment", &existing_assess);
+
+    /* Python-TUI-owned sub-keys inside the assessment block */
+    static const char * const PYTHON_ASSESS_KEYS[] = {
+        "consent", "subjective", "medical", "pain_classification",
+        "outcome_measures", "diagnosis", "barriers", "scratchpad", NULL
+    };
+    /* Python-TUI-owned root-level keys */
+    static const char * const PYTHON_ROOT_KEYS[] = {
+        "sections_complete", "sections_last_modified", NULL
+    };
+
+    json_object *root = json_object_new_object();
 
     /* Metadata */
     json_object_object_add(root, "version",       json_object_new_int(2));
@@ -245,20 +259,10 @@ gboolean persistence_save(AppState *app)
     json_object_object_add(obj, "zones",  obj_zones_to_json(app));
     json_object_object_add(obj, "points", obj_points_to_json(app));
     json_object_object_add(root, "objective", obj);
-    json_object_object_add(root, "neuro",
-        json_object_new_object());
+    json_object_object_add(root, "neuro", json_object_new_object());
 
-    /*
-     * Assessment block — GTK owns the legacy flat fields only.
-     * Get the existing assessment object (which may contain Python TUI nested
-     * fields) and update only GTK-owned keys in place. This leaves all Python
-     * TUI sub-dicts (consent, subjective, medical, …) untouched.
-     */
-    json_object *assess = NULL;
-    if (!json_object_object_get_ex(root, "assessment", &assess)) {
-        assess = json_object_new_object();
-        json_object_object_add(root, "assessment", assess);
-    }
+    /* Assessment block — GTK flat fields plus preserved Python TUI sub-objects */
+    json_object *assess = json_object_new_object();
     json_object_object_add(assess, "history",
         json_object_new_string(app->report.history));
     json_object_object_add(assess, "agg_factors",
@@ -275,6 +279,32 @@ gboolean persistence_save(AppState *app)
         json_object_new_string(app->report.clinical_notes));
     json_object_object_add(assess, "modified",
         json_object_new_int64((int64_t)time(NULL)));
+
+    /* Re-inject Python TUI sub-objects — json_object_get bumps refcount so
+       both the existing tree and the new assess safely share the object until
+       existing is freed below. */
+    if (existing_assess) {
+        for (int i = 0; PYTHON_ASSESS_KEYS[i]; i++) {
+            json_object *val = NULL;
+            if (json_object_object_get_ex(existing_assess, PYTHON_ASSESS_KEYS[i], &val) && val) {
+                json_object_get(val);
+                json_object_object_add(assess, PYTHON_ASSESS_KEYS[i], val);
+            }
+        }
+    }
+    json_object_object_add(root, "assessment", assess);
+
+    /* Re-inject root-level Python TUI keys (sections_complete, sections_last_modified) */
+    if (existing) {
+        for (int i = 0; PYTHON_ROOT_KEYS[i]; i++) {
+            json_object *val = NULL;
+            if (json_object_object_get_ex(existing, PYTHON_ROOT_KEYS[i], &val) && val) {
+                json_object_get(val);
+                json_object_object_add(root, PYTHON_ROOT_KEYS[i], val);
+            }
+        }
+        json_object_put(existing);   /* release; Python sub-objects still live via new tree */
+    }
 
     json_object *rpt = json_object_new_object();
     json_object_object_add(rpt, "assessment",
