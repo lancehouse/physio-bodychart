@@ -1265,31 +1265,19 @@ static void on_ppt_destroy(GtkWidget *w, gpointer data)
 static void on_ppt_keypad_digit(GtkButton *btn, gpointer data)
 {
     PPTEntryData *pd = (PPTEntryData *)data;
-    const char *label = gtk_button_get_label(btn);
-    if (!label) return;
+    const char *key = gtk_button_get_label(btn);
+    if (!key || !key[0]) return;
 
     const char *current = gtk_editable_get_text(GTK_EDITABLE(pd->entry));
-    gchar stripped[4] = {0};
-    int stripped_len = 0;
+    gsize len = strlen(current);
+    if (len >= 8) return;
 
-    for (int i = 0; current[i]; i++) {
-        if (current[i] >= '0' && current[i] <= '9') {
-            if (stripped_len < 2) {
-                stripped[stripped_len++] = current[i];
-            }
-        }
-    }
+    /* Only one decimal point allowed */
+    if (key[0] == '.' && strchr(current, '.')) return;
 
-    if (stripped_len < 2) {
-        stripped[stripped_len++] = label[0];
-        if (stripped_len == 2) {
-            gchar formatted[8];
-            snprintf(formatted, sizeof(formatted), "%c.%c", stripped[0], stripped[1]);
-            gtk_editable_set_text(GTK_EDITABLE(pd->entry), formatted);
-        } else {
-            gtk_editable_set_text(GTK_EDITABLE(pd->entry), stripped);
-        }
-    }
+    gchar buf[12];
+    snprintf(buf, sizeof(buf), "%s%c", current, key[0]);
+    gtk_editable_set_text(GTK_EDITABLE(pd->entry), buf);
 }
 
 static void on_ppt_keypad_delete(GtkButton *btn, gpointer data)
@@ -1297,26 +1285,12 @@ static void on_ppt_keypad_delete(GtkButton *btn, gpointer data)
     (void)btn;
     PPTEntryData *pd = (PPTEntryData *)data;
     const char *current = gtk_editable_get_text(GTK_EDITABLE(pd->entry));
+    gsize len = strlen(current);
+    if (len == 0) return;
 
-    gchar stripped[4] = {0};
-    int stripped_len = 0;
-
-    for (int i = 0; current[i]; i++) {
-        if (current[i] >= '0' && current[i] <= '9') {
-            if (stripped_len < 2) {
-                stripped[stripped_len++] = current[i];
-            }
-        }
-    }
-
-    if (stripped_len > 0) {
-        stripped_len--;
-        if (stripped_len == 1) {
-            gtk_editable_set_text(GTK_EDITABLE(pd->entry), stripped);
-        } else if (stripped_len == 0) {
-            gtk_editable_set_text(GTK_EDITABLE(pd->entry), "");
-        }
-    }
+    gchar buf[12];
+    snprintf(buf, sizeof(buf), "%.*s", (int)(len - 1), current);
+    gtk_editable_set_text(GTK_EDITABLE(pd->entry), buf);
 }
 
 static void on_ppt_confirm(GtkButton *btn, gpointer data)
@@ -1335,7 +1309,9 @@ static void on_ppt_confirm(GtkButton *btn, gpointer data)
         p->value = val;
         if (pd->type == OBJ_POINT_PPT)
             snprintf(p->label, sizeof(p->label), "%.1f", val);
-        else
+        else if (pd->type == OBJ_POINT_MONOFILAMENT)
+            snprintf(p->label, sizeof(p->label), "%.2f", val);
+        else  /* OBJ_POINT_TEMPORAL_SUM */
             snprintf(p->label, sizeof(p->label), "%d", (int)CLAMP(val, 0.0, 10.0));
         app->obj_point_count++;
         if (app->obj_undo_type_top < 64)
@@ -1405,7 +1381,7 @@ static void show_ppt_entry(AppState *app, int view, double bx, double by)
     const char *keypad_layout[] = { "7", "8", "9",
                                      "4", "5", "6",
                                      "1", "2", "3",
-                                     "0", "", "⌫" };
+                                     ".", "0", "⌫" };
     for (int i = 0; i < 12; i++) {
         int row = i / 3, col = i % 3;
         const char *label = keypad_layout[i];

@@ -134,15 +134,24 @@ void obj_chart_render_screen(AppState *app, cairo_t *cr, int view,
         cairo_fill(cr);
 
         /* Label */
-        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
         cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
                                CAIRO_FONT_WEIGHT_BOLD);
         cairo_set_font_size(cr, 13.5);   /* 50% larger than original 9.0 */
 
-        const char *unit = (p->type == OBJ_POINT_PPT)          ? " kg/cm²" :
-                           (p->type == OBJ_POINT_MONOFILAMENT)  ? " g"      : "";
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%s%s", p->label, unit);
+        const char *prefix, *unit;
+        double tr, tg, tb;   /* text colour components */
+        if (p->type == OBJ_POINT_PPT) {
+            prefix = "PPT: ";  unit = " kg/cm²";
+            tr = 0.70; tg = 0.88; tb = 1.00;   /* light blue */
+        } else if (p->type == OBJ_POINT_MONOFILAMENT) {
+            prefix = "MF: ";   unit = " g";
+            tr = 0.55; tg = 1.00; tb = 0.80;   /* light teal */
+        } else {
+            prefix = "";        unit = "";
+            tr = 0.90; tg = 0.75; tb = 1.00;   /* light purple (TS) */
+        }
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%s%s%s", prefix, p->label, unit);
 
         /* Background box */
         cairo_text_extents_t ext;
@@ -154,7 +163,7 @@ void obj_chart_render_screen(AppState *app, cairo_t *cr, int view,
                         ext.width + 4, ext.height + 2);
         cairo_fill(cr);
 
-        cairo_set_source_rgba(cr, 0.95, 0.95, 0.95, 1.0);
+        cairo_set_source_rgba(cr, tr, tg, tb, 1.0);
         cairo_move_to(cr, tx, ty);
         cairo_show_text(cr, buf);
         cairo_restore(cr);
