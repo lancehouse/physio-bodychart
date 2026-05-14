@@ -376,6 +376,7 @@ static AppState  *g_app_ref;
 /* ── Obj mode sidebar widget refs ────────────────────────────────────────── */
 static GtkWidget *g_obj_zone_btns[OBJ_ZONE_COUNT];
 static GtkWidget *g_obj_ppt_btn;
+static GtkWidget *g_obj_mono_btn;
 static GtkWidget *g_obj_ts_btn;
 static GtkWidget *g_obj_erase_btn;
 static GtkWidget *g_sidebar_content_stack;
@@ -492,6 +493,12 @@ static void update_toolbar_state(AppState *app)
             (app->current_mode == APP_MODE_OBJECTIVE &&
              app->obj_point_mode &&
              app->obj_point_type == OBJ_POINT_TEMPORAL_SUM)
+            ? "tool-btn-active" : "tool-btn");
+    if (g_obj_mono_btn)
+        gtk_widget_set_name(g_obj_mono_btn,
+            (app->current_mode == APP_MODE_OBJECTIVE &&
+             app->obj_point_mode &&
+             app->obj_point_type == OBJ_POINT_MONOFILAMENT)
             ? "tool-btn-active" : "tool-btn");
     if (g_obj_erase_btn)
         gtk_widget_set_name(g_obj_erase_btn,
@@ -1361,7 +1368,9 @@ static void show_ppt_entry(AppState *app, int view, double bx, double by)
 
     pd->window = gtk_window_new();
     gtk_widget_set_name(pd->window, "wiz-window");
-    const char *title = (pd->type == OBJ_POINT_PPT) ? "PPT (kg/cm²)" : "Temporal Sum (0–10)";
+    const char *title = pd->type == OBJ_POINT_PPT         ? "PPT (kg/cm²)"        :
+                        pd->type == OBJ_POINT_MONOFILAMENT ? "Monofilament (g)"    :
+                                                             "Temporal Sum (0–10)";
     gtk_window_set_title(GTK_WINDOW(pd->window), title);
     gtk_window_set_transient_for(GTK_WINDOW(pd->window),
                                  GTK_WINDOW(app->window));
@@ -1383,7 +1392,8 @@ static void show_ppt_entry(AppState *app, int view, double bx, double by)
 
     pd->entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(pd->entry),
-        (pd->type == OBJ_POINT_PPT) ? "e.g. 4.2" : "0–10");
+        pd->type == OBJ_POINT_PPT         ? "e.g. 4.2"  :
+        pd->type == OBJ_POINT_MONOFILAMENT ? "e.g. 0.07" : "0–10");
     gtk_widget_set_size_request(pd->entry, -1, 48);
     gtk_box_append(GTK_BOX(box), pd->entry);
 
@@ -1469,6 +1479,16 @@ static void on_obj_ts_clicked(GtkButton *btn, gpointer data)
     if (app->toolbar_update_cb) app->toolbar_update_cb(app);
 }
 
+static void on_obj_mono_clicked(GtkButton *btn, gpointer data)
+{
+    (void)btn;
+    AppState *app = data;
+    app->obj_point_mode = TRUE;
+    app->obj_point_type = OBJ_POINT_MONOFILAMENT;
+    app->tool = TOOL_DRAW;
+    if (app->toolbar_update_cb) app->toolbar_update_cb(app);
+}
+
 static void on_obj_erase_clicked(GtkButton *btn, gpointer data)
 {
     (void)btn;
@@ -1492,69 +1512,62 @@ static GtkWidget *build_obj_tab(AppState *app)
     gtk_widget_set_margin_end(box, 2);
     gtk_widget_set_margin_top(box, 2);
 
-    /* ── Zone section ── */
+    /* ── Zone section — single column, full names ── */
     GtkWidget *lbl_z = gtk_label_new("Zone");
     gtk_widget_set_name(lbl_z, "section-label");
     gtk_box_append(GTK_BOX(box), lbl_z);
 
     static gpointer zone_pairs[OBJ_ZONE_COUNT][2];
-    GtkWidget *zone_grid = make_grid2col();
+    GtkWidget *zone_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
     for (int i = 0; i < OBJ_ZONE_COUNT; i++) {
-        const char *lbl = OBJ_ZONE_DEFS[i].short_name;
-        GtkWidget *btn = make_btn(lbl, -1, 36);
+        GtkWidget *btn = make_btn(OBJ_ZONE_DEFS[i].name, -1, 36);
         gtk_widget_set_hexpand(btn, TRUE);
-        if (i == OBJ_ZONE_COUNT - 1)
-            gtk_grid_attach(GTK_GRID(zone_grid), btn, 0, i / 2, 2, 1);
-        else
-            gtk_grid_attach(GTK_GRID(zone_grid), btn, i % 2, i / 2, 1, 1);
         zone_pairs[i][0] = app;
         zone_pairs[i][1] = (gpointer)(gintptr)i;
         g_signal_connect(btn, "clicked", G_CALLBACK(on_obj_zone_clicked), zone_pairs[i]);
         g_obj_zone_btns[i] = btn;
+        gtk_box_append(GTK_BOX(zone_box), btn);
     }
-    gtk_box_append(GTK_BOX(box), zone_grid);
+    gtk_box_append(GTK_BOX(box), zone_box);
 
     gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 
-    /* ── Point section ── */
+    /* ── Point section — single column ── */
     GtkWidget *lbl_p = gtk_label_new("Point");
     gtk_widget_set_name(lbl_p, "section-label");
     gtk_box_append(GTK_BOX(box), lbl_p);
 
-    GtkWidget *pt_grid = make_grid2col();
-
-    g_obj_ppt_btn = make_btn("PPT", -1, 36);
+    g_obj_ppt_btn = make_btn("PPT kg/cm²", -1, 36);
     gtk_widget_set_hexpand(g_obj_ppt_btn, TRUE);
     g_signal_connect(g_obj_ppt_btn, "clicked", G_CALLBACK(on_obj_ppt_clicked), app);
-    gtk_grid_attach(GTK_GRID(pt_grid), g_obj_ppt_btn, 0, 0, 1, 1);
+    gtk_box_append(GTK_BOX(box), g_obj_ppt_btn);
 
-    g_obj_ts_btn = make_btn("TS", -1, 36);
+    g_obj_ts_btn = make_btn("Temporal Sum", -1, 36);
     gtk_widget_set_hexpand(g_obj_ts_btn, TRUE);
     g_signal_connect(g_obj_ts_btn, "clicked", G_CALLBACK(on_obj_ts_clicked), app);
-    gtk_grid_attach(GTK_GRID(pt_grid), g_obj_ts_btn, 1, 0, 1, 1);
+    gtk_box_append(GTK_BOX(box), g_obj_ts_btn);
 
-    gtk_box_append(GTK_BOX(box), pt_grid);
+    g_obj_mono_btn = make_btn("Monofilament", -1, 36);
+    gtk_widget_set_hexpand(g_obj_mono_btn, TRUE);
+    g_signal_connect(g_obj_mono_btn, "clicked", G_CALLBACK(on_obj_mono_clicked), app);
+    gtk_box_append(GTK_BOX(box), g_obj_mono_btn);
 
     gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 
-    /* ── Tools section ── */
+    /* ── Tools section — single column ── */
     GtkWidget *lbl_t = gtk_label_new("Tools");
     gtk_widget_set_name(lbl_t, "section-label");
     gtk_box_append(GTK_BOX(box), lbl_t);
 
-    GtkWidget *tool_grid = make_grid2col();
-
     g_obj_erase_btn = make_btn("Erase", -1, 36);
     gtk_widget_set_hexpand(g_obj_erase_btn, TRUE);
     g_signal_connect(g_obj_erase_btn, "clicked", G_CALLBACK(on_obj_erase_clicked), app);
-    gtk_grid_attach(GTK_GRID(tool_grid), g_obj_erase_btn, 0, 0, 1, 1);
+    gtk_box_append(GTK_BOX(box), g_obj_erase_btn);
 
     GtkWidget *undo_btn = make_btn("Undo", -1, 36);
     gtk_widget_set_hexpand(undo_btn, TRUE);
     g_signal_connect(undo_btn, "clicked", G_CALLBACK(on_obj_undo_clicked), app);
-    gtk_grid_attach(GTK_GRID(tool_grid), undo_btn, 1, 0, 1, 1);
-
-    gtk_box_append(GTK_BOX(box), tool_grid);
+    gtk_box_append(GTK_BOX(box), undo_btn);
 
     GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_vexpand(spacer, TRUE);
@@ -1970,6 +1983,7 @@ static void on_main_window_close(GtkWidget *w, gpointer data)
     AppState *app = data;
     persistence_monitor_stop(app);
     window_autosave(app);
+    session_export_combined_pdf(app);
 }
 
 void window_create(AppState *app, GtkApplication *gtk_app)

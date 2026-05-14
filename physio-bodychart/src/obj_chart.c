@@ -7,11 +7,14 @@
 
 /* ── Zone appearance table ───────────────────────────────────────────────── */
 const ObjZoneDef OBJ_ZONE_DEFS[OBJ_ZONE_COUNT] = {
-    { 0.96f, 0.82f, 0.00f, "Allodynia",    "Allo" },
-    { 0.94f, 0.47f, 0.13f, "Hyperalgesia", "Hyper" },
-    { 0.91f, 0.38f, 0.48f, "Erythema",     "Eryth" },
-    { 0.25f, 0.63f, 0.88f, "Temp Cool",    "Cool" },
-    { 0.75f, 0.19f, 0.19f, "Temp Warm",    "Warm" },
+    { 0.96f, 0.82f, 0.00f, "Allodynia",    "Allodynia"    },
+    { 0.94f, 0.47f, 0.13f, "Hyperalgesia", "Hyperalgesia" },
+    { 0.91f, 0.38f, 0.48f, "Erythema",     "Erythema"     },
+    { 0.25f, 0.63f, 0.88f, "Temp Cool",    "Temp Cool"    },
+    { 0.75f, 0.19f, 0.19f, "Temp Warm",    "Temp Warm"    },
+    { 0.69f, 0.69f, 0.75f, "Numb",         "Numb"         },
+    { 0.60f, 0.31f, 0.75f, "Oedema",       "Oedema"       },
+    { 0.70f, 0.44f, 0.19f, "Trophic",      "Trophic"      },
 };
 
 /* ── ObjZone lifecycle ───────────────────────────────────────────────────── */
@@ -122,9 +125,11 @@ void obj_chart_render_screen(AppState *app, cairo_t *cr, int view,
         /* Dot */
         cairo_save(cr);
         if (p->type == OBJ_POINT_PPT)
-            cairo_set_source_rgba(cr, 0.15, 0.40, 0.80, 0.90);
+            cairo_set_source_rgba(cr, 0.15, 0.40, 0.80, 0.90);   /* blue */
+        else if (p->type == OBJ_POINT_MONOFILAMENT)
+            cairo_set_source_rgba(cr, 0.20, 0.65, 0.45, 0.90);   /* teal */
         else
-            cairo_set_source_rgba(cr, 0.55, 0.15, 0.65, 0.90);
+            cairo_set_source_rgba(cr, 0.55, 0.15, 0.65, 0.90);   /* purple (TS) */
         cairo_arc(cr, sx, sy, 5.0, 0, 2 * G_PI);
         cairo_fill(cr);
 
@@ -132,9 +137,10 @@ void obj_chart_render_screen(AppState *app, cairo_t *cr, int view,
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
         cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
                                CAIRO_FONT_WEIGHT_BOLD);
-        cairo_set_font_size(cr, 9.0);
+        cairo_set_font_size(cr, 13.5);   /* 50% larger than original 9.0 */
 
-        const char *unit = (p->type == OBJ_POINT_PPT) ? " kg/cm²" : "";
+        const char *unit = (p->type == OBJ_POINT_PPT)          ? " kg/cm²" :
+                           (p->type == OBJ_POINT_MONOFILAMENT)  ? " g"      : "";
         char buf[32];
         snprintf(buf, sizeof(buf), "%s%s", p->label, unit);
 

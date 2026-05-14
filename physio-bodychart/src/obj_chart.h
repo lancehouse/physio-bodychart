@@ -13,12 +13,16 @@ typedef enum {
     OBJ_ZONE_ERYTHEMA,           /* pink     #E8607A */
     OBJ_ZONE_TEMP_COOL,          /* cyan     #40A0E0 */
     OBJ_ZONE_TEMP_WARM,          /* deep-red #C03030 */
+    OBJ_ZONE_NUMB,               /* cool grey #B0B0C0 */
+    OBJ_ZONE_OEDEMA,             /* purple   #9950C0 */
+    OBJ_ZONE_TROPHIC,            /* brown    #B37030 */
     OBJ_ZONE_COUNT
 } ObjZoneType;
 
 typedef enum {
     OBJ_POINT_PPT = 0,           /* Pressure Pain Threshold, kg/cm² */
     OBJ_POINT_TEMPORAL_SUM,      /* Temporal summation score, 0–10 */
+    OBJ_POINT_MONOFILAMENT,      /* Semmes-Weinstein monofilament, g */
     OBJ_POINT_COUNT
 } ObjPointType;
 
