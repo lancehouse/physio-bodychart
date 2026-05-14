@@ -6,13 +6,11 @@ This guide explains how to add, remove, or modify fields in the TUI assessment f
 
 ## Overview: How a Field Works
 
-Every field follows this cycle:
-
 ```
 compose()          → widget appears on screen
 FieldChanged msg   → triggers auto-save (2s debounce in assessment_view.py)
 collect()          → gathers all field values into a dict
-save_X()           → writes dict to session JSON under assessment.section_key
+save_all_sections()→ writes dict to _assessment.json
 load()             → on session open, reads dict back and populates widgets
 ```
 
@@ -20,144 +18,244 @@ load()             → on session open, reads dict back and populates widgets
 
 ## Field Types
 
-### YesNoField — toggle button (Yes / No / unset)
+### CheckButton — toggle (blank → Yes/green → No/red)
 
-Defined in `sections/consent.py`. Import it in any section:
+Defined in `widgets.py`. Use for neutral yes/no questions:
 
 ```python
-from .consent import YesNoField
+from ..widgets import CheckButton
+
+yield CheckButton("Is this present?", id="my_field_id")
 ```
 
-Usage in `compose()`:
+Reading in `collect()`:
 ```python
-yield Label("Is this present?")
-yield YesNoField(id="my_field_id")
-```
-
-Reading the value in `collect()`:
-```python
-data["my_field_id"] = self.query_one("#my_field_id", YesNoField).get_value()
+data["my_field_id"] = self.query_one("#my_field_id", CheckButton).value
 # Returns: True, False, or None (not yet answered)
 ```
 
-Loading it back in `load()`:
+Loading in `load()`:
 ```python
-self.query_one("#my_field_id", YesNoField).set_value(data.get("my_field_id"))
+self.query_one("#my_field_id", CheckButton).set_value(data.get("my_field_id"))
 ```
 
-### CycleField — multi-option cycling button
+### FlagButton — toggle (blank → Yes/**red**/danger → No/green/safe)
 
-Defined in `sections/outcome_measures.py`. Import it:
+Subclass of CheckButton. Use for clinically concerning findings where YES = bad:
 
 ```python
-from .outcome_measures import CycleField
+from ..widgets import FlagButton
+
+yield FlagButton("Red flag present?", id="rf_my_flag")
 ```
 
-Usage:
-```python
-yield CycleField(["Option A", "Option B", "Option C"], id="my_cycle_field")
-```
+`collect()` and `load()` are identical to CheckButton — `FlagButton` is a subclass so `query_one("#id", CheckButton)` finds it.
 
-Reading/loading: same pattern as YesNoField — `get_value()` returns the selected string or None, `set_value(val)` sets it.
+### LikelihoodField — None → Low → Moderate → High cycling
 
-### LikelihoodField — Low / Moderate / High cycling
-
-Defined in `sections/medical.py`:
+Defined in `sections/medical.py`. Import it:
 
 ```python
 from .medical import LikelihoodField
+
+yield LikelihoodField("Likelihood:", field_id="my_likelihood")
 ```
 
-Usage: same as CycleField, pre-configured to cycle Low → Moderate → High.
+Reading: `self.query_one("#my_likelihood", LikelihoodField).get_value()` → str or None
+Loading: `self.query_one("#my_likelihood", LikelihoodField).set_value(data.get("my_likelihood"))`
+
+### CycleField — multi-option cycling button
+
+Defined in `sections/outcome_measures.py`:
+
+```python
+from .outcome_measures import CycleField
+
+yield CycleField(["Option A", "Option B", "Option C"], id="my_cycle_field")
+```
+
+Reading/loading: same pattern — `get_value()` / `set_value(val)`.
 
 ### Input — single line text
-
-Standard Textual widget. Always include `id=`:
 
 ```python
 yield Input(placeholder="Enter value...", id="my_input_id")
 ```
 
-Collect: `self.query_one("#my_input_id", Input).value`  
+Collect: `self.query_one("#my_input_id", Input).value`
 Load: `self.query_one("#my_input_id", Input).value = data.get("my_input_id", "")`
 
 ### TextArea — multi-line text (auto-expanding)
 
-Always use this instead of Input for anything that might be multiple sentences:
+Always use this instead of Input for anything multi-sentence:
 
 ```python
-yield TextArea(id="my_text_id")
+yield TextArea(id="my_text_id", language="plain")
 ```
 
-Collect: `self.query_one("#my_text_id", TextArea).text`  
-Load: `self.query_one("#my_text_id", TextArea).load_text(data.get("my_text_id", ""))`
+Collect: `self.query_one("#my_text_id", TextArea).text`
+Load: `self.query_one("#my_text_id", TextArea).text = data.get("my_text_id", "")`
 
-In CSS, set:
+CSS:
 ```css
-#my_text_id { height: auto; min-height: 1; }
+#my_text_id { height: auto; min-height: 2; padding: 0 1; }
+```
+
+---
+
+## Standard Layout Patterns
+
+### Label + field on one row (field_row)
+
+```python
+with Horizontal(classes="field_row"):
+    yield Label("My label\n(second line):")
+    yield TextArea(id="my_text", language="plain")
+```
+
+CSS required in section DEFAULT_CSS:
+```css
+.field_row { height: auto; width: 100%; margin: 0; padding: 0; }
+.field_row Label { width: 28; height: auto; padding: 0 1 0 0; }
+.field_row TextArea { width: 1fr; height: auto; min-height: 2; padding: 0 1; }
+```
+
+### Button groups (btn_row) — up to 5 across
+
+```python
+with Horizontal(classes="btn_row"):
+    yield CheckButton("Option A", id="opt_a")
+    yield CheckButton("Option B", id="opt_b")
+    yield CheckButton("Option C", id="opt_c")
+```
+
+```css
+.btn_row { height: auto; width: 100%; margin-bottom: 1; }
+CheckButton { width: auto; height: 3; min-width: 16; margin: 0 1 0 0; }
+```
+
+### Standalone full-width button
+
+```python
+yield CheckButton("This statement is confirmed", id="confirmed_btn", classes="solo_btn")
+```
+
+```css
+.solo_btn { margin-bottom: 0; }
+```
+
+---
+
+## CSS Rules for Sections
+
+Every rebuilt section must have these in DEFAULT_CSS:
+
+```css
+MySection {
+    width: 100%;
+    height: auto;       ← CRITICAL: never height: 100%
+    padding: 0 1;
+}
+
+.section_title     { text-style: bold; color: $text; margin-bottom: 0; }
+.subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+.subgroup_header   { color: $text-muted; margin-top: 1; margin-bottom: 0; text-style: italic; }
+```
+
+**⚠ Critical: any `Vertical` container needs `height: auto`**
+
+`Vertical` defaults to `height: 1fr` which collapses to zero inside a `height: auto` parent.
+Always add explicitly:
+```css
+#my_table { height: auto; width: 100%; }
 ```
 
 ---
 
 ## Registering Fields in collect() / load()
 
-Every section has these two methods. They iterate over lists of field IDs to avoid repetition.
-
-**Pattern used in diagnosis.py and barriers.py:**
-
 ```python
-_TOGGLE_FIELDS = ["field_a", "field_b", "field_c"]
-_INPUT_FIELDS  = ["input_a", "input_b"]
+_TOGGLE_FIELDS = ["field_a", "field_b"]
 _TEXT_FIELDS   = ["text_a", "text_b"]
 
 def collect(self) -> dict:
     data = {}
-    for fid in _TOGGLE_FIELDS:
-        data[fid] = self.query_one(f"#{fid}", YesNoField).get_value()
-    for fid in _INPUT_FIELDS:
-        data[fid] = self.query_one(f"#{fid}", Input).value
-    for fid in _TEXT_FIELDS:
-        data[fid] = self.query_one(f"#{fid}", TextArea).text
+    for fid in self._TOGGLE_FIELDS:
+        try:
+            data[fid] = self.query_one(f"#{fid}", CheckButton).value
+        except Exception:
+            data[fid] = None
+    for fid in self._TEXT_FIELDS:
+        try:
+            data[fid] = self.query_one(f"#{fid}", TextArea).text
+        except Exception:
+            data[fid] = ""
     return data
 
 def load(self, data: dict) -> None:
-    for fid in _TOGGLE_FIELDS:
-        self.query_one(f"#{fid}", YesNoField).set_value(data.get(fid))
-    for fid in _INPUT_FIELDS:
-        self.query_one(f"#{fid}", Input).value = data.get(fid, "")
-    for fid in _TEXT_FIELDS:
-        self.query_one(f"#{fid}", TextArea).load_text(data.get(fid, ""))
+    self._loading = True
+    try:
+        for fid in self._TOGGLE_FIELDS:
+            if fid in data:
+                try:
+                    self.query_one(f"#{fid}", CheckButton).set_value(data[fid])
+                except Exception:
+                    pass
+        for fid in self._TEXT_FIELDS:
+            if fid in data:
+                try:
+                    self.query_one(f"#{fid}", TextArea).text = data[fid]
+                except Exception:
+                    pass
+    finally:
+        self._loading = False
 ```
 
-**To add a new field:** add its ID to the appropriate list AND add the widget in `compose()`.
+**⚠ load() receives the pre-extracted section dict — never call `.get("section_key")` inside load().**
 
 ---
 
-## Adding a New Field to an Existing Section
+## Auto-Save Trigger
 
-Example: adding a new toggle to the Barriers section.
-
-**Step 1** — open `sections/barriers.py`, add the ID to the right list:
 ```python
-_TOGGLE_FIELDS = [
-    ...existing fields...,
-    "b_new_barrier",   # ← add here
-]
+from ..widgets import CheckButton, FlagButton
+from textual.message import Message
+
+@on(CheckButton.Changed)   # catches both CheckButton and FlagButton
+@on(Input.Changed)
+@on(TextArea.Changed)
+def _on_field_changed(self) -> None:
+    if self._loading:
+        return
+    self.post_message(self.FieldChanged())
+
+class FieldChanged(Message):
+    pass
 ```
 
-**Step 2** — add the widget in `compose()` at the right place in the layout:
+---
+
+## Jump-to-Subsection (_jump_to)
+
 ```python
-yield Label("New barrier description")
-yield YesNoField(id="b_new_barrier")
+from textual.containers import ScrollableContainer
+
+def _jump_to(self, anchor_id: str) -> None:
+    try:
+        target = self.query_one(f"#{anchor_id}")
+        self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(
+            target, top=True
+        )
+    except Exception:
+        pass
 ```
 
-That's it. `collect()` and `load()` are driven by the lists, so they pick it up automatically.
-
-**Step 3** — test the import before launching:
-```bash
-cd ~/Projects/physio-bodychart/physio-assessment
-.venv/bin/python3 -c "from physio_assessment.sections.barriers import BarriersSection; print('OK')"
+Subsection headers act as anchors:
+```python
+yield Label("— My Subsection —", classes="subsection_header", id="my_anchor")
 ```
+
+To wire the top chrome nav bar for a new section, see `SubsectionNavBar.set_context()` in `tui.py`.
 
 ---
 
@@ -165,161 +263,36 @@ cd ~/Projects/physio-bodychart/physio-assessment
 
 | Prefix | Meaning |
 |--------|---------|
+| `rf_`  | Red flag |
+| `umn_` | Upper motor neurone sign |
+| `cvd_` | Cardiovascular risk factor |
+| `comorbid_` | Comorbidity |
+| `diff_` | Differential screening |
 | `b_`   | Main barrier (boolean) |
 | `bx_`  | Barrier sub-item |
 | `bi_`  | Barrier input (text/NRS) |
 | `tx_`  | Treatment plan item |
-| `s1_`  | Session 1 checklist item |
-| `hw_`  | Homework item |
-| `d1_`  | Day 1 item |
-| `ps_`  | Post-session item |
-| `fu_`  | Follow-up item |
 | `dx_`  | Diagnosis field |
 
-Keep IDs lowercase with underscores. IDs **must be unique across the entire mounted widget tree** — if you get a "duplicate ID" error at runtime, a field in another section already uses that name.
-
----
-
-## Adding a New Section
-
-1. **Create** `sections/my_section.py` — copy `sections/diagnosis.py` as a template.  
-   Change the class name, field lists, and `compose()` content.
-
-2. **Add storage functions** in `storage.py`:
-```python
-def load_my_section(session_file: str) -> dict:
-    data = _load_session(session_file)
-    return data.get("assessment", {}).get("my_section", {})
-
-def save_my_section(session_file: str, section_data: dict) -> bool:
-    return _save_assessment_section(session_file, "my_section", section_data)
-```
-
-3. **Wire into `assessment_view.py`**:
-
-   a. Import at top:
-   ```python
-   from .sections.my_section import MySection
-   from .storage import load_my_section, save_my_section
-   ```
-
-   b. Add to `self.sections` dict in `__init__` or wherever sections are defined:
-   ```python
-   "08_my_section": MySection(id="section_08_my_section"),
-   ```
-
-   c. Add to `load_session()`:
-   ```python
-   section_data = data.get("assessment", {}).get("my_section", {})
-   if "08_my_section" in self.sections:
-       sec = self.sections["08_my_section"]
-       sec.session_file = session_file
-       sec.load(section_data)
-   ```
-
-   d. Add to `_do_save()`:
-   ```python
-   elif section_id == "08_my_section":
-       sec = self.sections[section_id]
-       save_my_section(self.session_file, sec.collect())
-   ```
-
-   e. Add a cross-ref refresh call in `_show_section()` if the section has badges:
-   ```python
-   elif section_id == "08_my_section":
-       self.sections["08_my_section"].update_cross_refs(self.session_file)
-   ```
-
-4. **Add to the nav** — in `assessment_view.py`, find the section tab/button list and add an entry for the new section.
-
----
-
-## Cross-Reference Badges
-
-Cross-ref badges are `Static` widgets that show data from other sections:
-
-```python
-yield Static("", id="xref_my_badge", classes="xref_badge")
-# or for urgent/red:
-yield Static("", id="xref_my_badge", classes="xref_badge_urgent")
-```
-
-Update them in `update_cross_refs(self, session_file: str)`:
-
-```python
-def update_cross_refs(self, session_file: str) -> None:
-    med = load_medical(session_file)  # load another section
-    val = med.get("some_field")
-    badge = self.query_one("#xref_my_badge", Static)
-    if val:
-        badge.update(f"Medical → {val}")
-    else:
-        badge.update("")
-```
-
-`update_cross_refs()` is called from `assessment_view.py`'s `_show_section()` each time the user navigates to this section, so badges are always fresh.
-
----
-
-## Auto-Save Trigger
-
-Every interactive widget must emit `FieldChanged` when its value changes, so the parent can debounce and save. Check the widget class — most already do this. If you add a raw `Input` widget, you need to handle its `Changed` event:
-
-```python
-@on(Input.Changed, "#my_input_id")
-def _on_my_input_changed(self, event: Input.Changed) -> None:
-    self.post_message(self.FieldChanged())
-```
-
-For `YesNoField` and `CycleField`, this is already built in — their button presses post `FieldChanged` automatically.
+IDs must be **unique across the entire mounted widget tree**. Duplicate IDs cause runtime errors.
 
 ---
 
 ## is_complete()
 
-Each section implements `is_complete() -> bool`. This drives the `●/○` indicator in the session list. Define a sensible threshold:
-
 ```python
 def is_complete(self) -> bool:
-    # Example: complete when the first required field is filled
-    return self.query_one("#required_field", YesNoField).get_value() is not None
-```
-
-The result is stored in `sections_complete` in the session JSON.
-
----
-
-## CycleField Options
-
-When defining a `CycleField`, pass a list of strings. The first click sets the first option, subsequent clicks cycle through. Clicking again after the last option returns to `None` (unset).
-
-```python
-yield CycleField(["Nociceptive", "Neuropathic", "Nociplastic", "Mixed"], id="dx_mechanism")
-```
-
-Add the field ID to `_CYCLE_FIELDS` in your section so `collect()` and `load()` handle it:
-
-```python
-_CYCLE_FIELDS = ["dx_mechanism", "dx_type"]
-
-# In collect():
-for fid in _CYCLE_FIELDS:
-    data[fid] = self.query_one(f"#{fid}", CycleField).get_value()
-
-# In load():
-for fid in _CYCLE_FIELDS:
-    self.query_one(f"#{fid}", CycleField).set_value(data.get(fid))
+    try:
+        return self.query_one("#required_field", CheckButton).value is not None
+    except Exception:
+        return False
 ```
 
 ---
 
 ## Quick Reference: Test Before Launch
 
-Always run an import test after editing a section file:
-
 ```bash
 cd ~/Projects/physio-bodychart/physio-assessment
-.venv/bin/python3 -c "from physio_assessment.sections.barriers import BarriersSection; print('OK')"
+.venv/bin/python3 -c "from physio_assessment.sections.medical import MedicalSection; print('OK')"
 ```
-
-Replace `barriers` / `BarriersSection` with your section. If this prints `OK`, the file is syntactically valid and imports cleanly. If it errors, fix before launching the full app.

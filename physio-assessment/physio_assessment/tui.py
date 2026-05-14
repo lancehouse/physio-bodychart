@@ -16,8 +16,11 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
+from rich.text import Text
+
 from textual.app import ComposeResult, on
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.message import Message
 from textual.widgets import Header, Footer, Static, Label, Input, TextArea, Button, ListItem, ListView
 from textual.binding import Binding
 
@@ -67,6 +70,11 @@ def _focus_tui_window() -> None:
 class SessionListRow(Static):
     """Single session row in the session list."""
 
+    class Selected(Message):
+        def __init__(self, session_path: str) -> None:
+            super().__init__()
+            self.session_path = session_path
+
     def __init__(self, session: dict, **kwargs):
         super().__init__(**kwargs)
         self.session = session
@@ -76,6 +84,9 @@ class SessionListRow(Static):
         self.sections_complete = session["sections_complete"]
         self.body_chart_data = session["body_chart_data"]
         self.date = session["date"]
+
+    def on_click(self) -> None:
+        self.post_message(self.Selected(self.session_path))
 
     def render(self) -> str:
         if isinstance(self.date, str):
@@ -126,7 +137,10 @@ class SessionListScreen(Container):
     def on_mount(self) -> None:
         self.load_sessions()
         self.query_one("#session_search", Input).focus()
-        self.query_one("#session_search").watch("value", self._on_search_change)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "session_search":
+            self._on_search_change(event.value)
 
     def load_sessions(self) -> None:
         self.sessions = list_sessions()
@@ -175,7 +189,9 @@ class SessionListScreen(Container):
                 row = SessionListRow(session)
                 row.styles.height = "auto"
                 container.mount(row)
-                row.on_click = lambda p=session["path"]: self.on_session_selected(p)
+
+    def on_session_list_row_selected(self, event: SessionListRow.Selected) -> None:
+        self.on_session_selected(event.session_path)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "new_session_btn":
@@ -183,7 +199,7 @@ class SessionListScreen(Container):
         elif event.button.id == "quit_btn":
             self.app.exit()
 
-    class NewSessionRequested:
+    class NewSessionRequested(Message):
         pass
 
 
@@ -225,6 +241,190 @@ class BodyChartPanel(Static):
 # Main assessment container
 # ---------------------------------------------------------------------------
 
+class _NavChip(Static):
+    """Clickable nav chip — plain Static avoids Button's unoverrideable CSS."""
+
+    DEFAULT_CSS = """
+    _NavChip {
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        background: #2a4060;
+        color: white;
+    }
+    _NavChip:hover {
+        background: #4a7090;
+    }
+    """
+
+    def __init__(self, label, anchor_id: str, section_widget_id: str, **kwargs) -> None:
+        super().__init__(label, **kwargs)
+        self._anchor_id = anchor_id
+        self._section_widget_id = section_widget_id
+
+    def on_click(self) -> None:
+        try:
+            self.app.query_one(self._section_widget_id)._jump_to(self._anchor_id)
+        except Exception:
+            pass
+
+
+class SubsectionNavBar(Static):
+    """Context-sensitive subsection jump bar — lives in the top chrome row.
+
+    Hidden by default; shown when a section with sub-navigation is active.
+    Call set_context(section_id) when switching sections to swap chips.
+    Underlined character in Subjective chips shows the Alt+key shortcut.
+    """
+
+    # (before, underlined_key, after, anchor_id)  — Subjective has Alt+key shortcuts
+    SUBJECTIVE_SUBS = [
+        ("",      "S", "ymptoms",     "subj_symptoms"),
+        ("",      "H", "istory",      "subj_history"),
+        ("Flare-","U", "ps",          "subj_flareups"),
+        ("",      "M", "gmt",         "subj_management"),
+        ("",      "A", "ctivity",     "subj_activity"),
+        ("",      "W", "ork",         "subj_work"),
+        ("sl",    "E", "ep",          "subj_sleep"),
+        ("beha",  "V", "iour",        "subj_behaviour"),
+        ("",      "P", "sychosocial", "subj_psychosocial"),
+        ("",      "R", "isk",         "subj_suicide"),
+    ]
+
+    MEDICAL_SUBS = [
+        ("Comorbid",     "med_comorbidities"),
+        ("CVD Risk",     "med_cardiovascular"),
+        ("Red Flags",    "med_red_flags"),
+        ("Differential", "med_differential"),
+        ("Medications",  "med_medications"),
+    ]
+
+    PAIN_CLASS_SUBS = [
+        ("Inflamm",      "pc_inflammatory"),
+        ("Nociceptive",  "pc_nociceptive"),
+        ("Neuropathic",  "pc_neuropathic"),
+        ("Nociplastic",  "pc_nociplastic"),
+        ("Central Sens", "pc_central"),
+        ("Summary",      "pc_summary"),
+    ]
+
+    OM_SUBS = [
+        ("PSFS",       "om_psfs"),
+        ("BPI",        "om_bpi"),
+        ("DASS",       "om_dass"),
+        ("PCS",        "om_pcs"),
+        ("PSEQ/PCL",   "om_pseq"),
+        ("Sleep",      "om_sleep"),
+        ("Additional", "om_additional"),
+        ("Hypothesis", "om_hypothesis"),
+    ]
+
+    DX_SUBS = [
+        ("Overview",    "dx_overview"),
+        ("Primary",     "dx_primary"),
+        ("Post-Surg",   "dx_surgical"),
+        ("Post-Trauma", "dx_traumatic"),
+        ("MSK",         "dx_msk"),
+        ("Neuro",       "dx_neuropathic"),
+        ("Mixed",       "dx_mixed"),
+        ("Goals",       "dx_goals"),
+    ]
+
+    BR_SUBS = [
+        ("Physical",   "br_physical"),
+        ("Neuro",      "br_neuro"),
+        ("Nocip",      "br_nocip"),
+        ("Psych",      "br_psych"),
+        ("Sleep/Soc",  "br_sleep"),
+        ("Medical",    "br_medical"),
+        ("Custom",     "br_custom"),
+        ("Treatment",  "br_treatment"),
+        ("Session 1",  "br_session1"),
+        ("Day 1",      "br_day1"),
+        ("Follow-Up",  "br_followup"),
+    ]
+
+    DEFAULT_CSS = """
+    SubsectionNavBar {
+        height: 1;
+        width: 1fr;
+        layout: horizontal;
+        background: #1a2a3a;
+        padding: 0;
+    }
+    """
+
+    def _make_label(self, before: str, key: str, after: str) -> Text:
+        t = Text()
+        if before:
+            t.append(before)
+        t.append(key, style="underline bold")
+        t.append(after)
+        return t
+
+    def compose(self) -> ComposeResult:
+        # Default: Subjective chips (bar is hidden until a section activates it)
+        for before, key, after, anchor_id in self.SUBJECTIVE_SUBS:
+            yield _NavChip(
+                self._make_label(before, key, after),
+                anchor_id=anchor_id,
+                section_widget_id="#section_02_subjective",
+                id=f"subnav_{anchor_id}",
+            )
+
+    def set_context(self, section_id: str) -> None:
+        """Swap chips to match the newly active section."""
+        self.remove_children()
+        if section_id == "02_subjective":
+            for before, key, after, anchor_id in self.SUBJECTIVE_SUBS:
+                self.mount(_NavChip(
+                    self._make_label(before, key, after),
+                    anchor_id=anchor_id,
+                    section_widget_id="#section_02_subjective",
+                    id=f"subnav_{anchor_id}",
+                ))
+        elif section_id == "03_medical":
+            for label, anchor_id in self.MEDICAL_SUBS:
+                self.mount(_NavChip(
+                    label,
+                    anchor_id=anchor_id,
+                    section_widget_id="#section_03_medical",
+                    id=f"subnav_{anchor_id}",
+                ))
+        elif section_id == "04_pain_classification":
+            for label, anchor_id in self.PAIN_CLASS_SUBS:
+                self.mount(_NavChip(
+                    label,
+                    anchor_id=anchor_id,
+                    section_widget_id="#section_04_pain_classification",
+                    id=f"subnav_{anchor_id}",
+                ))
+        elif section_id == "05_outcome_measures":
+            for label, anchor_id in self.OM_SUBS:
+                self.mount(_NavChip(
+                    label,
+                    anchor_id=anchor_id,
+                    section_widget_id="#section_05_outcome_measures",
+                    id=f"subnav_{anchor_id}",
+                ))
+        elif section_id == "06_diagnosis":
+            for label, anchor_id in self.DX_SUBS:
+                self.mount(_NavChip(
+                    label,
+                    anchor_id=anchor_id,
+                    section_widget_id="#section_06_diagnosis",
+                    id=f"subnav_{anchor_id}",
+                ))
+        elif section_id == "07_barriers":
+            for label, anchor_id in self.BR_SUBS:
+                self.mount(_NavChip(
+                    label,
+                    anchor_id=anchor_id,
+                    section_widget_id="#section_07_barriers",
+                    id=f"subnav_{anchor_id}",
+                ))
+
+
 class PhysioAssessmentTUI(Container):
     """Assessment form container — owns the watcher and all keyboard actions."""
 
@@ -238,6 +438,28 @@ class PhysioAssessmentTUI(Container):
 
     DEFAULT_CSS = """
     PhysioAssessmentTUI { height: 100%; width: 100%; layout: vertical; }
+
+    #top_bar {
+        height: 1;
+        width: 100%;
+        background: $boost;
+        padding: 0 1;
+    }
+    #session_header {
+        width: 19;
+        height: 1;
+        color: $text;
+        padding: 0 1 0 0;
+    }
+    #chart_panel {
+        width: auto;
+        height: 1;
+        color: $text-muted;
+    }
+    #subsection_nav_bar {
+        display: none;
+    }
+
     #tui_status {
         height: 1; width: 100%;
         background: $boost; color: $text-muted;
@@ -253,10 +475,12 @@ class PhysioAssessmentTUI(Container):
         self._status_timer = None
 
     def compose(self) -> ComposeResult:
-        yield SessionHeader(id="session_header")
-        yield BodyChartPanel(id="chart_panel")
+        with Horizontal(id="top_bar"):
+            yield SessionHeader(id="session_header")
+            yield SubsectionNavBar(id="subsection_nav_bar")
+            yield BodyChartPanel(id="chart_panel")
         yield AssessmentView(id="assessment_view")
-        yield Static("", id="tui_status")  # sits naturally at bottom of vertical layout
+        yield Static("", id="tui_status")
 
     def on_mount(self) -> None:
         self.watcher = BodyChartWatcher(
@@ -364,6 +588,14 @@ class PhysioAssessmentTUI(Container):
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
+
+    async def save_if_pending(self) -> None:
+        """Flush pending debounced save before navigating away. Only saves if a save is queued."""
+        assessment_view = self.query_one("#assessment_view", AssessmentView)
+        task = assessment_view._save_task
+        if task and not task.done():
+            task.cancel()
+            await assessment_view._do_save()
 
     def action_save(self) -> None:
         assessment_view = self.query_one("#assessment_view", AssessmentView)

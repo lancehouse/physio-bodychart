@@ -1,6 +1,7 @@
 """Base class for all assessment sections."""
 
 from textual.containers import ScrollableContainer
+from textual.css.query import NoMatches
 
 
 class BaseSection(ScrollableContainer):
@@ -13,6 +14,13 @@ class BaseSection(ScrollableContainer):
         super().__init__(**kwargs)
         self.session_file = ""
         self._loading = False
+
+    def focus_first_field(self) -> None:
+        """Focus the first interactive widget in this section."""
+        try:
+            self.query("Input, TextArea, CheckButton, Button").first().focus()
+        except NoMatches:
+            pass
 
     def load(self, data: dict) -> None:
         """Populate section fields from JSON data dict.

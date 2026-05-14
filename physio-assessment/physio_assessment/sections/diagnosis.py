@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 
 from textual.app import ComposeResult, on
-from textual.containers import Vertical, ScrollableContainer
-from textual.widgets import Label, Input, TextArea, Button, Static
+from textual.containers import ScrollableContainer
+from textual.widgets import Label, Input, TextArea, Static
 from textual.message import Message
 
 from .base import BaseSection
-from .consent import YesNoField
+from ..widgets import CheckButton
 from .outcome_measures import CycleField
 
 
@@ -82,59 +82,6 @@ _MIXED_DOMINANT_OPTIONS = [
 
 
 # ---------------------------------------------------------------------------
-# Nav bar
-# ---------------------------------------------------------------------------
-
-class DxNavBar(Static):
-    """Fixed navigation bar for Diagnosis section."""
-
-    SUBSECTIONS = [
-        ("Overview",    "dx_overview"),
-        ("Primary",     "dx_primary"),
-        ("Post-Surg",   "dx_surgical"),
-        ("Post-Trauma", "dx_traumatic"),
-        ("MSK",         "dx_msk"),
-        ("Neuro",       "dx_neuropathic"),
-        ("Mixed",       "dx_mixed"),
-        ("Goals",       "dx_goals"),
-    ]
-
-    DEFAULT_CSS = """
-    DxNavBar {
-        width: 100%;
-        height: auto;
-        background: $boost;
-        border-bottom: solid $primary;
-        padding: 0;
-        layout: horizontal;
-    }
-    DxNavBar Button {
-        width: auto;
-        height: auto;
-        min-width: 0;
-        padding: 0 1;
-        border: none;
-        background: $boost;
-    }
-    DxNavBar Button:hover { background: $accent; }
-    """
-
-    def __init__(self, on_jump_to: callable, **kwargs):
-        super().__init__(**kwargs)
-        self._on_jump_to = on_jump_to
-
-    def compose(self) -> ComposeResult:
-        for label, anchor_id in self.SUBSECTIONS:
-            yield Button(label, id=f"nav_{anchor_id}")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid and bid.startswith("nav_"):
-            self._on_jump_to(bid[4:])
-        event.stop()
-
-
-# ---------------------------------------------------------------------------
 # DiagnosisSection
 # ---------------------------------------------------------------------------
 
@@ -171,14 +118,9 @@ class DiagnosisSection(BaseSection):
     DEFAULT_CSS = """
     DiagnosisSection {
         width: 100%;
-        height: 100%;
-        layout: vertical;
-        padding: 0;
+        height: auto;
+        padding: 0 1;
     }
-
-    #dx_nav  { height: auto; }
-    #dx_scroll { width: 100%; height: 1fr; }
-    #dx_content { width: 100%; height: auto; padding: 0 1; }
 
     .section_title     { text-style: bold; margin-bottom: 0; }
     .subsection_header {
@@ -191,6 +133,8 @@ class DiagnosisSection(BaseSection):
     Input  { height: auto; min-height: 1; margin-bottom: 0; }
     TextArea { height: auto; min-height: 2; margin-bottom: 0; }
 
+    .toggle_btn { width: 100%; height: 3; margin-bottom: 0; }
+
     .xref_badge {
         width: 100%; height: auto; padding: 0 1;
         margin-bottom: 0; color: $accent; background: $accent 12%;
@@ -202,105 +146,99 @@ class DiagnosisSection(BaseSection):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield DxNavBar(on_jump_to=self._jump_to, id="dx_nav")
+        yield Label("Clinical Impression & ICD-11 Diagnosis", classes="section_title")
 
-        with ScrollableContainer(id="dx_scroll"):
-            with Vertical(id="dx_content"):
-                yield Label("Clinical Impression & ICD-11 Diagnosis", classes="section_title")
+        # ── Pathway selection ──────────────────────────────────
+        yield Label("— ICD-11 Pathway Selection —", classes="subsection_header", id="dx_overview")
+        yield Label("(Nicholas et al 2019, Schug et al 2019, Perrot et al 2019, Scholz et al 2019)", classes="reference_note")
+        yield CheckButton("Duration >3 months", id="duration_over_3_months", classes="toggle_btn")
+        yield Static("", id="xref_dx_duration", classes="xref_badge")
+        yield Label("Mechanism:")
+        yield CycleField("mechanism", _MECHANISM_OPTIONS)
+        yield Static("", id="xref_dx_mechanism", classes="xref_badge")
 
-                # ── Pathway selection ──────────────────────────────────
-                yield Label("— ICD-11 Pathway Selection —", classes="subsection_header", id="dx_overview")
-                yield Label("(Nicholas et al 2019, Schug et al 2019, Perrot et al 2019, Scholz et al 2019)", classes="reference_note")
+        # ── Chronic Primary Pain ───────────────────────────────
+        yield Label("— Chronic Primary Pain —", classes="subsection_header", id="dx_primary")
+        yield Label("(Nicholas et al 2019)", classes="reference_note")
+        yield Static("", id="xref_dx_primary", classes="xref_badge")
+        yield CheckButton("Significant emotional distress or functional limitation", id="primary_distress", classes="toggle_btn")
+        yield CheckButton("Not better accounted for by another diagnosis", id="primary_not_other_dx", classes="toggle_btn")
+        yield Label("Subtype:")
+        yield CycleField("primary_subtype", _PRIMARY_SUBTYPE_OPTIONS)
+        yield Label("Severity:")
+        yield CycleField("primary_severity", _SEVERITY_OPTIONS)
+        yield Static("", id="xref_dx_primary_severity", classes="xref_badge")
 
-                yield YesNoField("Duration >3 months", field_id="duration_over_3_months")
-                yield Static("", id="xref_dx_duration", classes="xref_badge")
+        # ── Chronic Post-Surgical Pain ─────────────────────────
+        yield Label("— Chronic Post-Surgical Pain —", classes="subsection_header", id="dx_surgical")
+        yield Label("(Schug et al 2019)", classes="reference_note")
+        yield Label("Surgical procedure:")
+        yield Input(id="surgical_procedure", placeholder="procedure name")
+        yield Label("Subtype:")
+        yield CycleField("surgical_subtype", _SURGICAL_SUBTYPE_OPTIONS)
+        yield Label("Most likely specific source:")
+        yield Input(id="surgical_source", placeholder="source")
+        yield Label("Severity:")
+        yield CycleField("surgical_severity", _SEVERITY_OPTIONS)
+        yield Static("", id="xref_dx_surgical_severity", classes="xref_badge")
 
-                yield Label("Mechanism:")
-                yield CycleField("mechanism", _MECHANISM_OPTIONS)
-                yield Static("", id="xref_dx_mechanism", classes="xref_badge")
+        # ── Chronic Post-Traumatic Pain ────────────────────────
+        yield Label("— Chronic Post-Traumatic Pain —", classes="subsection_header", id="dx_traumatic")
+        yield Label("(Schug et al 2019)", classes="reference_note")
+        yield Static("", id="xref_dx_traumatic", classes="xref_badge")
+        yield Label("Traumatic event:")
+        yield Input(id="traumatic_event", placeholder="describe event")
+        yield Label("Subtype:")
+        yield CycleField("traumatic_subtype", _TRAUMATIC_SUBTYPE_OPTIONS)
+        yield Label("Most likely specific source:")
+        yield Input(id="traumatic_source", placeholder="source")
+        yield Label("Severity:")
+        yield CycleField("traumatic_severity", _SEVERITY_OPTIONS)
+        yield Static("", id="xref_dx_traumatic_severity", classes="xref_badge")
 
-                # ── Chronic Primary Pain ───────────────────────────────
-                yield Label("— Chronic Primary Pain —", classes="subsection_header", id="dx_primary")
-                yield Label("(Nicholas et al 2019)", classes="reference_note")
-                yield Static("", id="xref_dx_primary", classes="xref_badge")
-                yield YesNoField("Significant emotional distress or functional limitation", field_id="primary_distress")
-                yield YesNoField("Not better accounted for by another diagnosis",          field_id="primary_not_other_dx")
-                yield Label("Subtype:")
-                yield CycleField("primary_subtype", _PRIMARY_SUBTYPE_OPTIONS)
-                yield Label("Severity:")
-                yield CycleField("primary_severity", _SEVERITY_OPTIONS)
-                yield Static("", id="xref_dx_primary_severity", classes="xref_badge")
+        # ── Chronic Secondary MSK Pain ─────────────────────────
+        yield Label("— Chronic Secondary MSK Pain —", classes="subsection_header", id="dx_msk")
+        yield Label("(Perrot et al 2019)", classes="reference_note")
+        yield Label("Underlying disease / pathology:")
+        yield Input(id="msk_pathology", placeholder="pathology")
+        yield Label("Subtype:")
+        yield CycleField("msk_subtype", _MSK_SUBTYPE_OPTIONS)
+        yield Label("Most likely specific source:")
+        yield Input(id="msk_source", placeholder="source")
+        yield Label("Severity:")
+        yield CycleField("msk_severity", _SEVERITY_OPTIONS)
+        yield Static("", id="xref_dx_msk_severity", classes="xref_badge")
 
-                # ── Chronic Post-Surgical Pain ─────────────────────────
-                yield Label("— Chronic Post-Surgical Pain —", classes="subsection_header", id="dx_surgical")
-                yield Label("(Schug et al 2019)", classes="reference_note")
-                yield Label("Surgical procedure:")
-                yield Input(id="surgical_procedure", placeholder="procedure name")
-                yield Label("Subtype:")
-                yield CycleField("surgical_subtype", _SURGICAL_SUBTYPE_OPTIONS)
-                yield Label("Most likely specific source:")
-                yield Input(id="surgical_source", placeholder="source")
-                yield Label("Severity:")
-                yield CycleField("surgical_severity", _SEVERITY_OPTIONS)
-                yield Static("", id="xref_dx_surgical_severity", classes="xref_badge")
+        # ── Chronic Neuropathic Pain ───────────────────────────
+        yield Label("— Chronic Neuropathic Pain —", classes="subsection_header", id="dx_neuropathic")
+        yield Label("(Scholz et al 2019)", classes="reference_note")
+        yield Static("", id="xref_dx_neuropathic", classes="xref_badge")
+        yield Label("Causative lesion / disease:")
+        yield Input(id="neuro_lesion", placeholder="lesion or disease")
+        yield Label("Subtype:")
+        yield CycleField("neuro_subtype", _NEURO_SUBTYPE_OPTIONS)
+        yield Label("Severity:")
+        yield CycleField("neuro_severity", _SEVERITY_OPTIONS)
+        yield Static("", id="xref_dx_neuro_severity", classes="xref_badge")
 
-                # ── Chronic Post-Traumatic Pain ────────────────────────
-                yield Label("— Chronic Post-Traumatic Pain —", classes="subsection_header", id="dx_traumatic")
-                yield Label("(Schug et al 2019)", classes="reference_note")
-                yield Static("", id="xref_dx_traumatic", classes="xref_badge")
-                yield Label("Traumatic event:")
-                yield Input(id="traumatic_event", placeholder="describe event")
-                yield Label("Subtype:")
-                yield CycleField("traumatic_subtype", _TRAUMATIC_SUBTYPE_OPTIONS)
-                yield Label("Most likely specific source:")
-                yield Input(id="traumatic_source", placeholder="source")
-                yield Label("Severity:")
-                yield CycleField("traumatic_severity", _SEVERITY_OPTIONS)
-                yield Static("", id="xref_dx_traumatic_severity", classes="xref_badge")
+        # ── Mixed / Indeterminate ──────────────────────────────
+        yield Label("— Mixed / Indeterminate —", classes="subsection_header", id="dx_mixed")
+        yield Label("Dominant type if determinable:")
+        yield CycleField("mixed_dominant", _MIXED_DOMINANT_OPTIONS)
+        yield Label("Reasoning:")
+        yield TextArea(id="mixed_reasoning", language="plain")
 
-                # ── Chronic Secondary MSK Pain ─────────────────────────
-                yield Label("— Chronic Secondary MSK Pain —", classes="subsection_header", id="dx_msk")
-                yield Label("(Perrot et al 2019)", classes="reference_note")
-                yield Label("Underlying disease / pathology:")
-                yield Input(id="msk_pathology", placeholder="pathology")
-                yield Label("Subtype:")
-                yield CycleField("msk_subtype", _MSK_SUBTYPE_OPTIONS)
-                yield Label("Most likely specific source:")
-                yield Input(id="msk_source", placeholder="source")
-                yield Label("Severity:")
-                yield CycleField("msk_severity", _SEVERITY_OPTIONS)
-                yield Static("", id="xref_dx_msk_severity", classes="xref_badge")
-
-                # ── Chronic Neuropathic Pain ───────────────────────────
-                yield Label("— Chronic Neuropathic Pain —", classes="subsection_header", id="dx_neuropathic")
-                yield Label("(Scholz et al 2019)", classes="reference_note")
-                yield Static("", id="xref_dx_neuropathic", classes="xref_badge")
-                yield Label("Causative lesion / disease:")
-                yield Input(id="neuro_lesion", placeholder="lesion or disease")
-                yield Label("Subtype:")
-                yield CycleField("neuro_subtype", _NEURO_SUBTYPE_OPTIONS)
-                yield Label("Severity:")
-                yield CycleField("neuro_severity", _SEVERITY_OPTIONS)
-                yield Static("", id="xref_dx_neuro_severity", classes="xref_badge")
-
-                # ── Mixed / Indeterminate ──────────────────────────────
-                yield Label("— Mixed / Indeterminate —", classes="subsection_header", id="dx_mixed")
-                yield Label("Dominant type if determinable:")
-                yield CycleField("mixed_dominant", _MIXED_DOMINANT_OPTIONS)
-                yield Label("Reasoning:")
-                yield TextArea(id="mixed_reasoning", language="plain")
-
-                # ── SMART Goals ────────────────────────────────────────
-                yield Label("— SMART Goals —", classes="subsection_header", id="dx_goals")
-                yield Label("Following completion of the assessment, the following potentially meaningful goals were confirmed:", classes="reference_note")
-                yield Label("1.")
-                yield Input(id="goal_1", placeholder="Goal 1")
-                yield Label("2.")
-                yield Input(id="goal_2", placeholder="Goal 2")
-                yield Label("3.")
-                yield Input(id="goal_3", placeholder="Goal 3")
-                yield Label("4.")
-                yield Input(id="goal_4", placeholder="Goal 4")
+        # ── SMART Goals ────────────────────────────────────────
+        yield Label("— SMART Goals —", classes="subsection_header", id="dx_goals")
+        yield Label("Following completion of the assessment, the following potentially meaningful goals were confirmed:", classes="reference_note")
+        yield Label("1.")
+        yield Input(id="goal_1", placeholder="Goal 1")
+        yield Label("2.")
+        yield Input(id="goal_2", placeholder="Goal 2")
+        yield Label("3.")
+        yield Input(id="goal_3", placeholder="Goal 3")
+        yield Label("4.")
+        yield Input(id="goal_4", placeholder="Goal 4")
 
     # ------------------------------------------------------------------
     # Navigation
@@ -309,7 +247,7 @@ class DiagnosisSection(BaseSection):
     def _jump_to(self, anchor_id: str) -> None:
         try:
             target = self.query_one(f"#{anchor_id}")
-            self.query_one("#dx_scroll", ScrollableContainer).scroll_to_widget(target, top=True)
+            self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(target, top=True)
         except Exception:
             pass
 
@@ -405,7 +343,7 @@ class DiagnosisSection(BaseSection):
                 data[fid] = None
         for fid in _TOGGLE_FIELDS:
             try:
-                data[fid] = self.query_one(f"#{fid}", YesNoField).get_value()
+                data[fid] = self.query_one(f"#{fid}", CheckButton).value
             except Exception:
                 data[fid] = None
         for fid in _INPUT_FIELDS:
@@ -433,7 +371,7 @@ class DiagnosisSection(BaseSection):
             for fid in _TOGGLE_FIELDS:
                 if fid in dx:
                     try:
-                        self.query_one(f"#{fid}", YesNoField).set_value(dx[fid])
+                        self.query_one(f"#{fid}", CheckButton).set_value(dx[fid])
                     except Exception:
                         pass
             for fid in _INPUT_FIELDS:
@@ -459,7 +397,7 @@ class DiagnosisSection(BaseSection):
     # Events
     # ------------------------------------------------------------------
 
-    @on(YesNoField.Changed)
+    @on(CheckButton.Changed)
     @on(CycleField.Changed)
     @on(Input.Changed, selector="Input")
     @on(TextArea.Changed, selector="TextArea")

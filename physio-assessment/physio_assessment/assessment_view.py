@@ -166,7 +166,7 @@ class AssessmentView(Container):
 
     #section_content_inner {
         width: 100%;
-        height: 100%;
+        height: auto;
     }
     """
 
@@ -214,6 +214,10 @@ class AssessmentView(Container):
             data = self._pending_load
             self._pending_load = None
             self.load_session(self.session_file, data)
+
+    def on_unmount(self) -> None:
+        if self._save_task and not self._save_task.done():
+            self._save_task.cancel()
 
     def load_session(self, session_file: str, data: dict) -> None:
         """Load session data into all sections."""
@@ -345,6 +349,16 @@ class AssessmentView(Container):
         nav = self.query_one("#section_nav", SectionNav)
         nav.set_active(section_id)
 
+        # Show subsection nav bar for sections that have one; swap chips to match
+        has_subnav = section_id in ("02_subjective", "03_medical", "04_pain_classification", "05_outcome_measures", "06_diagnosis", "07_barriers")
+        try:
+            nav_bar = self.app.query_one("#subsection_nav_bar")
+            nav_bar.display = has_subnav
+            if has_subnav:
+                nav_bar.set_context(section_id)
+        except Exception:
+            pass
+
     def _update_medical_tab_color(self) -> None:
         """Update the 03 Medical nav button to orange/green/red based on urgent red flag review."""
         try:
@@ -358,11 +372,8 @@ class AssessmentView(Container):
             pass
 
     def _refresh_nav_indicators(self, data: dict) -> None:
-        """Update all section completion indicators."""
-        from .storage import get_sections_complete
-
-        sections_complete = get_sections_complete(data)
-
+        """Update all section completion indicators from stored sections_complete dict."""
+        sections_complete = data.get("sections_complete", {})
         nav = self.query_one("#section_nav", SectionNav)
         nav.refresh_indicators(sections_complete)
 

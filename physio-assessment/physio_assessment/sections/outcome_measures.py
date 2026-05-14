@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 
 from textual.app import ComposeResult, on
-from textual.containers import Vertical, Horizontal, ScrollableContainer
+from textual.containers import Horizontal, ScrollableContainer
 from textual.widgets import Label, Input, TextArea, Button, Static
 from textual.message import Message
 
 from .base import BaseSection
-from .consent import YesNoField
+from ..widgets import CheckButton
 
 
 # ---------------------------------------------------------------------------
@@ -182,61 +182,6 @@ class HypRow(Horizontal):
 
 
 # ---------------------------------------------------------------------------
-# OMNavBar
-# ---------------------------------------------------------------------------
-
-class OMNavBar(Static):
-    """Fixed navigation bar for Outcome Measures section."""
-
-    SUBSECTIONS = [
-        ("PSFS",       "om_psfs"),
-        ("BPI",        "om_bpi"),
-        ("DASS",       "om_dass"),
-        ("PCS",        "om_pcs"),
-        ("PSEQ/PCL",   "om_pseq"),
-        ("Sleep",      "om_sleep"),
-        ("Additional", "om_additional"),
-        ("Hypothesis", "om_hypothesis"),
-    ]
-
-    DEFAULT_CSS = """
-    OMNavBar {
-        width: 100%;
-        height: auto;
-        background: $boost;
-        border-bottom: solid $primary;
-        padding: 0;
-        layout: horizontal;
-    }
-    OMNavBar Button {
-        width: auto;
-        height: auto;
-        min-width: 0;
-        padding: 0 1;
-        border: none;
-        background: $boost;
-    }
-    OMNavBar Button:hover {
-        background: $accent;
-    }
-    """
-
-    def __init__(self, on_jump_to: callable, **kwargs):
-        super().__init__(**kwargs)
-        self._on_jump_to = on_jump_to
-
-    def compose(self) -> ComposeResult:
-        for label, anchor_id in self.SUBSECTIONS:
-            yield Button(label, id=f"nav_{anchor_id}")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid and bid.startswith("nav_"):
-            self._on_jump_to(bid[4:])
-        event.stop()
-
-
-# ---------------------------------------------------------------------------
 # OutcomeMeasuresSection
 # ---------------------------------------------------------------------------
 
@@ -270,16 +215,9 @@ class OutcomeMeasuresSection(BaseSection):
     DEFAULT_CSS = """
     OutcomeMeasuresSection {
         width: 100%;
-        height: 100%;
-        layout: vertical;
-        padding: 0;
+        height: auto;
+        padding: 0 1;
     }
-
-    #om_nav { height: auto; }
-
-    #om_scroll { width: 100%; height: 1fr; }
-
-    #om_content { width: 100%; height: auto; padding: 0 1; }
 
     .section_title  { text-style: bold; margin-bottom: 0; }
     .subsection_header {
@@ -339,6 +277,9 @@ class OutcomeMeasuresSection(BaseSection):
         margin-bottom: 0; color: $warning; background: $warning 20%;
         text-style: bold;
     }
+
+    /* Additional measures toggle buttons */
+    .add_btn { width: 100%; height: 3; margin-bottom: 0; }
     """
 
     # ------------------------------------------------------------------
@@ -346,145 +287,138 @@ class OutcomeMeasuresSection(BaseSection):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield OMNavBar(on_jump_to=self._jump_to, id="om_nav")
+        yield Label("Outcome Measures", classes="section_title")
 
-        with ScrollableContainer(id="om_scroll"):
-            with Vertical(id="om_content"):
-                yield Label("Outcome Measures", classes="section_title")
+        # ── PSFS ──────────────────────────────────────────────
+        yield Label("— Patient Specific Functional Scale (PSFS) —", classes="subsection_header", id="om_psfs")
+        yield Label("Score /80:")
+        with Horizontal(classes="om_row"):
+            yield Input(id="psfs_score", placeholder="/80", classes="om_score")
+            yield CycleField("psfs_interp", _PSFS_INTERP_OPTIONS)
+        yield Label("Activities listed:")
+        yield Input(id="psfs_act_1", placeholder="1.")
+        yield Input(id="psfs_act_2", placeholder="2.")
+        yield Input(id="psfs_act_3", placeholder="3.")
+        yield Input(id="psfs_act_4", placeholder="4.")
+        yield Input(id="psfs_act_5", placeholder="5.")
 
-                # ── PSFS ──────────────────────────────────────────────
-                yield Label("— Patient Specific Functional Scale (PSFS) —", classes="subsection_header", id="om_psfs")
-                yield Label("Score /80:")
-                with Horizontal(classes="om_row"):
-                    yield Input(id="psfs_score", placeholder="/80", classes="om_score")
-                    yield CycleField("psfs_interp", _PSFS_INTERP_OPTIONS)
-                yield Label("Activities listed:")
-                yield Input(id="psfs_act_1", placeholder="1.")
-                yield Input(id="psfs_act_2", placeholder="2.")
-                yield Input(id="psfs_act_3", placeholder="3.")
-                yield Input(id="psfs_act_4", placeholder="4.")
-                yield Input(id="psfs_act_5", placeholder="5.")
+        # ── BPI ───────────────────────────────────────────────
+        yield Label("— Brief Pain Inventory (BPI) —", classes="subsection_header", id="om_bpi")
+        yield Label("Scores /10 — higher = greater impairment due to pain", classes="reference_note")
+        with Horizontal(classes="bpi_row"):
+            yield Label("General activity:", classes="bpi_label")
+            yield Input(id="bpi_activity", placeholder="/10", classes="bpi_score")
+        with Horizontal(classes="bpi_row"):
+            yield Label("Mood:", classes="bpi_label")
+            yield Input(id="bpi_mood", placeholder="/10", classes="bpi_score")
+        with Horizontal(classes="bpi_row"):
+            yield Label("Walking ability:", classes="bpi_label")
+            yield Input(id="bpi_walking", placeholder="/10", classes="bpi_score")
+        with Horizontal(classes="bpi_row"):
+            yield Label("Normal work:", classes="bpi_label")
+            yield Input(id="bpi_work", placeholder="/10", classes="bpi_score")
+        with Horizontal(classes="bpi_row"):
+            yield Label("Relations with other people:", classes="bpi_label")
+            yield Input(id="bpi_relations", placeholder="/10", classes="bpi_score")
+        with Horizontal(classes="bpi_row"):
+            yield Label("Sleep:", classes="bpi_label")
+            yield Input(id="bpi_sleep", placeholder="/10", classes="bpi_score")
+        with Horizontal(classes="bpi_row"):
+            yield Label("Enjoyment of life:", classes="bpi_label")
+            yield Input(id="bpi_enjoyment", placeholder="/10", classes="bpi_score")
 
-                # ── BPI ───────────────────────────────────────────────
-                yield Label("— Brief Pain Inventory (BPI) —", classes="subsection_header", id="om_bpi")
-                yield Label("Scores /10 — higher = greater impairment due to pain", classes="reference_note")
-                with Horizontal(classes="bpi_row"):
-                    yield Label("General activity:", classes="bpi_label")
-                    yield Input(id="bpi_activity", placeholder="/10", classes="bpi_score")
-                with Horizontal(classes="bpi_row"):
-                    yield Label("Mood:", classes="bpi_label")
-                    yield Input(id="bpi_mood", placeholder="/10", classes="bpi_score")
-                with Horizontal(classes="bpi_row"):
-                    yield Label("Walking ability:", classes="bpi_label")
-                    yield Input(id="bpi_walking", placeholder="/10", classes="bpi_score")
-                with Horizontal(classes="bpi_row"):
-                    yield Label("Normal work:", classes="bpi_label")
-                    yield Input(id="bpi_work", placeholder="/10", classes="bpi_score")
-                with Horizontal(classes="bpi_row"):
-                    yield Label("Relations with other people:", classes="bpi_label")
-                    yield Input(id="bpi_relations", placeholder="/10", classes="bpi_score")
-                with Horizontal(classes="bpi_row"):
-                    yield Label("Sleep:", classes="bpi_label")
-                    yield Input(id="bpi_sleep", placeholder="/10", classes="bpi_score")
-                with Horizontal(classes="bpi_row"):
-                    yield Label("Enjoyment of life:", classes="bpi_label")
-                    yield Input(id="bpi_enjoyment", placeholder="/10", classes="bpi_score")
+        # ── DASS-21 ───────────────────────────────────────────
+        yield Label("— DASS-21 —", classes="subsection_header", id="om_dass")
+        yield Static("", id="xref_om_dass", classes="xref_badge")
+        with Horizontal(classes="dass_row"):
+            yield Label("Depression:",   classes="dass_label")
+            yield Input(id="dass_dep_score", placeholder="0–42", classes="dass_score")
+            yield CycleField("dass_dep_interp", _DASS_OPTIONS)
+        with Horizontal(classes="dass_row"):
+            yield Label("Anxiety:",      classes="dass_label")
+            yield Input(id="dass_anx_score", placeholder="0–42", classes="dass_score")
+            yield CycleField("dass_anx_interp", _DASS_OPTIONS)
+        with Horizontal(classes="dass_row"):
+            yield Label("Stress:",       classes="dass_label")
+            yield Input(id="dass_str_score", placeholder="0–42", classes="dass_score")
+            yield CycleField("dass_str_interp", _DASS_OPTIONS)
 
-                # ── DASS-21 ───────────────────────────────────────────
-                yield Label("— DASS-21 —", classes="subsection_header", id="om_dass")
-                yield Static("", id="xref_om_dass", classes="xref_badge")
-                with Horizontal(classes="dass_row"):
-                    yield Label("Depression:",   classes="dass_label")
-                    yield Input(id="dass_dep_score", placeholder="0–42", classes="dass_score")
-                    yield CycleField("dass_dep_interp", _DASS_OPTIONS)
-                with Horizontal(classes="dass_row"):
-                    yield Label("Anxiety:",      classes="dass_label")
-                    yield Input(id="dass_anx_score", placeholder="0–42", classes="dass_score")
-                    yield CycleField("dass_anx_interp", _DASS_OPTIONS)
-                with Horizontal(classes="dass_row"):
-                    yield Label("Stress:",       classes="dass_label")
-                    yield Input(id="dass_str_score", placeholder="0–42", classes="dass_score")
-                    yield CycleField("dass_str_interp", _DASS_OPTIONS)
+        # ── PCS ───────────────────────────────────────────────
+        yield Label("— Pain Catastrophising Scale (PCS) —", classes="subsection_header", id="om_pcs")
+        yield Static("", id="xref_om_pcs", classes="xref_badge")
+        with Horizontal(classes="pcs_row"):
+            yield Label("Rumination:",   classes="pcs_label")
+            yield Label("/16", classes="pcs_max")
+            yield Input(id="pcs_rum_score",  placeholder="0–16",  classes="pcs_score")
+            yield CycleField("pcs_rum_risk",  _PCS_RISK_OPTIONS)
+        with Horizontal(classes="pcs_row"):
+            yield Label("Magnification:", classes="pcs_label")
+            yield Label("/12", classes="pcs_max")
+            yield Input(id="pcs_mag_score",  placeholder="0–12",  classes="pcs_score")
+            yield CycleField("pcs_mag_risk",  _PCS_RISK_OPTIONS)
+        with Horizontal(classes="pcs_row"):
+            yield Label("Helplessness:", classes="pcs_label")
+            yield Label("/24", classes="pcs_max")
+            yield Input(id="pcs_help_score", placeholder="0–24",  classes="pcs_score")
+            yield CycleField("pcs_help_risk", _PCS_RISK_OPTIONS)
+        with Horizontal(classes="pcs_row"):
+            yield Label("Total:",        classes="pcs_label")
+            yield Label("/52", classes="pcs_max")
+            yield Input(id="pcs_total_score", placeholder="0–52", classes="pcs_score")
+            yield CycleField("pcs_total_risk", _PCS_RISK_OPTIONS)
+        yield Static("", id="om_pcs_alert", classes="om_alert")
 
-                # ── PCS ───────────────────────────────────────────────
-                yield Label("— Pain Catastrophising Scale (PCS) —", classes="subsection_header", id="om_pcs")
-                yield Static("", id="xref_om_pcs", classes="xref_badge")
-                with Horizontal(classes="pcs_row"):
-                    yield Label("Rumination:",   classes="pcs_label")
-                    yield Label("/16", classes="pcs_max")
-                    yield Input(id="pcs_rum_score",  placeholder="0–16",  classes="pcs_score")
-                    yield CycleField("pcs_rum_risk",  _PCS_RISK_OPTIONS)
-                with Horizontal(classes="pcs_row"):
-                    yield Label("Magnification:", classes="pcs_label")
-                    yield Label("/12", classes="pcs_max")
-                    yield Input(id="pcs_mag_score",  placeholder="0–12",  classes="pcs_score")
-                    yield CycleField("pcs_mag_risk",  _PCS_RISK_OPTIONS)
-                with Horizontal(classes="pcs_row"):
-                    yield Label("Helplessness:", classes="pcs_label")
-                    yield Label("/24", classes="pcs_max")
-                    yield Input(id="pcs_help_score", placeholder="0–24",  classes="pcs_score")
-                    yield CycleField("pcs_help_risk", _PCS_RISK_OPTIONS)
-                with Horizontal(classes="pcs_row"):
-                    yield Label("Total:",        classes="pcs_label")
-                    yield Label("/52", classes="pcs_max")
-                    yield Input(id="pcs_total_score",placeholder="0–52",  classes="pcs_score")
-                    yield CycleField("pcs_total_risk",_PCS_RISK_OPTIONS)
-                yield Static("", id="om_pcs_alert", classes="om_alert")
+        # ── PSEQ ──────────────────────────────────────────────
+        yield Label("— Pain Self-Efficacy Questionnaire (PSEQ) —", classes="subsection_header", id="om_pseq")
+        yield Label("Score /60 — higher = stronger self-efficacy", classes="reference_note")
+        yield Input(id="pseq_score", placeholder="/60")
+        yield Static("", id="xref_om_pseq", classes="xref_badge")
 
-                # ── PSEQ ──────────────────────────────────────────────
-                yield Label("— Pain Self-Efficacy Questionnaire (PSEQ) —", classes="subsection_header", id="om_pseq")
-                yield Label("Score /60 — higher = stronger self-efficacy", classes="reference_note")
-                yield Input(id="pseq_score", placeholder="/60")
-                yield Static("", id="xref_om_pseq", classes="xref_badge")
+        # ── PCL-5 ─────────────────────────────────────────────
+        yield Label("— Post-Traumatic Stress Disorder Checklist (PCL-5) —", classes="subsection_header")
+        yield Label("Score /80:")
+        with Horizontal(classes="om_row"):
+            yield Input(id="pcl5_score", placeholder="/80", classes="om_score")
+            yield CycleField("pcl5_interp", _PCL5_OPTIONS)
+        yield Static("", id="om_pcl5_alert", classes="om_alert")
+        yield Static("", id="xref_om_pcl5", classes="xref_badge_urgent")
+        yield Label("Action if positive:")
+        yield TextArea(id="pcl5_action", language="plain")
 
-                # ── PCL-5 ─────────────────────────────────────────────
-                yield Label("— Post-Traumatic Stress Disorder Checklist (PCL-5) —", classes="subsection_header")
-                yield Label("Score /80:", )
-                with Horizontal(classes="om_row"):
-                    yield Input(id="pcl5_score", placeholder="/80", classes="om_score")
-                    yield CycleField("pcl5_interp", _PCL5_OPTIONS)
-                yield Static("", id="om_pcl5_alert", classes="om_alert")
-                yield Static("", id="xref_om_pcl5", classes="xref_badge_urgent")
-                yield Label("Action if positive:")
-                yield TextArea(id="pcl5_action", language="plain")
+        # ── Sleep ─────────────────────────────────────────────
+        yield Label("— Sleep Outcome Measures —", classes="subsection_header", id="om_sleep")
+        yield Static("", id="xref_om_sleep", classes="xref_badge")
+        yield Label("Insomnia Severity Index (ISI) — score /28:")
+        with Horizontal(classes="om_row"):
+            yield Input(id="isi_score", placeholder="/28", classes="om_score")
+            yield CycleField("isi_interp", _ISI_OPTIONS)
+        yield Static("", id="om_isi_alert", classes="om_alert")
+        yield Label("Pain-Related Beliefs and Attitudes About Sleep (PBAS) — score /10:")
+        with Horizontal(classes="om_row"):
+            yield Input(id="pbas_score", placeholder="/10", classes="om_score")
+            yield CycleField("pbas_interp", _PBAS_OPTIONS)
 
-                # ── Sleep ─────────────────────────────────────────────
-                yield Label("— Sleep Outcome Measures —", classes="subsection_header", id="om_sleep")
-                yield Static("", id="xref_om_sleep", classes="xref_badge")
+        # ── Additional ────────────────────────────────────────
+        yield Label("— Additional Measures —", classes="subsection_header", id="om_additional")
+        yield CheckButton("AUDIT (alcohol use) — administered?", id="add_audit", classes="add_btn")
+        yield Static("", id="xref_om_audit", classes="xref_badge")
+        yield CheckButton("DUDIT (drug use) — administered?", id="add_dudit", classes="add_btn")
+        yield Label("ePPOC components (specify):")
+        yield TextArea(id="add_epoc", language="plain")
+        yield Label("Other:")
+        yield TextArea(id="add_other", language="plain")
 
-                yield Label("Insomnia Severity Index (ISI) — score /28:")
-                with Horizontal(classes="om_row"):
-                    yield Input(id="isi_score", placeholder="/28", classes="om_score")
-                    yield CycleField("isi_interp", _ISI_OPTIONS)
-                yield Static("", id="om_isi_alert", classes="om_alert")
-
-                yield Label("Pain-Related Beliefs and Attitudes About Sleep (PBAS) — score /10:")
-                with Horizontal(classes="om_row"):
-                    yield Input(id="pbas_score", placeholder="/10", classes="om_score")
-                    yield CycleField("pbas_interp", _PBAS_OPTIONS)
-
-                # ── Additional ────────────────────────────────────────
-                yield Label("— Additional Measures —", classes="subsection_header", id="om_additional")
-                yield YesNoField("AUDIT (alcohol use)",  field_id="add_audit")
-                yield Static("", id="xref_om_audit", classes="xref_badge")
-                yield YesNoField("DUDIT (drug use)",     field_id="add_dudit")
-                yield Label("ePPOC components (specify):")
-                yield TextArea(id="add_epoc", language="plain")
-                yield Label("Other:")
-                yield TextArea(id="add_other", language="plain")
-
-                # ── Hypothesis testing ────────────────────────────────
-                yield Label("— Measures Selected for Ongoing Hypothesis Testing —", classes="subsection_header", id="om_hypothesis")
-                yield Label("Individualise questionnaire set to test your clinical hypothesis for this patient.", classes="reference_note")
-                with Horizontal(classes="hyp_header_row"):
-                    yield Label("Measure",   classes="hyp_measure hyp_header")
-                    yield Label("Baseline",  classes="hyp_baseline hyp_header")
-                    yield Label("Interval",  classes="hyp_interval hyp_header")
-                    yield Label("Rationale", classes="hyp_rationale hyp_header")
-                for i in range(_HYP_ROWS):
-                    yield HypRow(i)
-
-                yield Label("Administer questionnaires same day where possible. Score before next session.", classes="reference_note")
+        # ── Hypothesis testing ────────────────────────────────
+        yield Label("— Measures Selected for Ongoing Hypothesis Testing —", classes="subsection_header", id="om_hypothesis")
+        yield Label("Individualise questionnaire set to test your clinical hypothesis for this patient.", classes="reference_note")
+        with Horizontal(classes="hyp_header_row"):
+            yield Label("Measure",   classes="hyp_measure hyp_header")
+            yield Label("Baseline",  classes="hyp_baseline hyp_header")
+            yield Label("Interval",  classes="hyp_interval hyp_header")
+            yield Label("Rationale", classes="hyp_rationale hyp_header")
+        for i in range(_HYP_ROWS):
+            yield HypRow(i)
+        yield Label("Administer questionnaires same day where possible. Score before next session.", classes="reference_note")
 
     # ------------------------------------------------------------------
     # Navigation
@@ -493,7 +427,7 @@ class OutcomeMeasuresSection(BaseSection):
     def _jump_to(self, anchor_id: str) -> None:
         try:
             target = self.query_one(f"#{anchor_id}")
-            self.query_one("#om_scroll", ScrollableContainer).scroll_to_widget(target, top=True)
+            self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(target, top=True)
         except Exception:
             pass
 
@@ -639,7 +573,7 @@ class OutcomeMeasuresSection(BaseSection):
                 data[fid] = None
         for fid in _TOGGLE_FIELDS:
             try:
-                data[fid] = self.query_one(f"#{fid}", YesNoField).get_value()
+                data[fid] = self.query_one(f"#{fid}", CheckButton).value
             except Exception:
                 data[fid] = None
         for fid in _TEXT_FIELDS:
@@ -675,7 +609,7 @@ class OutcomeMeasuresSection(BaseSection):
             for fid in _TOGGLE_FIELDS:
                 if fid in om:
                     try:
-                        self.query_one(f"#{fid}", YesNoField).set_value(om[fid])
+                        self.query_one(f"#{fid}", CheckButton).set_value(om[fid])
                     except Exception:
                         pass
             for fid in _TEXT_FIELDS:
@@ -708,6 +642,7 @@ class OutcomeMeasuresSection(BaseSection):
     # Events
     # ------------------------------------------------------------------
 
+    @on(CheckButton.Changed)
     @on(CycleField.Changed)
     @on(Input.Changed, selector="Input")
     @on(TextArea.Changed, selector="TextArea")
