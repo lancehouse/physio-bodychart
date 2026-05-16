@@ -149,7 +149,7 @@ class GeneralSection(BaseSection):
                 data[iid] = ""
         for rg in self.query(RadioGroup):
             data[rg.id] = rg.value
-        for inp in self.query(".obs_cmt", Input):
+        for inp in self.query("Input.obs_cmt"):
             data[inp.id] = inp.value
         for tid in self._TA_IDS:
             try:
@@ -168,7 +168,7 @@ class GeneralSection(BaseSection):
                     pass
             for rg in self.query(RadioGroup):
                 rg.set_value(data.get(rg.id))
-            for inp in self.query(".obs_cmt", Input):
+            for inp in self.query("Input.obs_cmt"):
                 inp.value = data.get(inp.id, "")
             for tid in self._TA_IDS:
                 try:

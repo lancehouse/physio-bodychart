@@ -860,7 +860,7 @@ def _raw_table(headers: list, rows: list) -> list:
 
 
 def _render_objective_md(obj: dict) -> list:
-    """Render all objective sections as a list of Markdown lines."""
+    """Render all objective sections as comprehensive Markdown — all fields shown."""
     lines: list = []
 
     gen  = obj.get("general",      {}) or {}
@@ -880,15 +880,11 @@ def _render_objective_md(obj: dict) -> list:
     # ── 01 General Observation ────────────────────────────────────────────────
     if gen:
         lines.append("### 01 General Observation")
-        parts = []
         for key, lbl, unit in [("go_height","Height","cm"),("go_weight","Weight","kg"),
                                 ("go_bmi","BMI",""),("go_nrs","NRS rest","/10"),
                                 ("go_sit_tol","Sit tol","min")]:
             v = gen.get(key, "")
-            if v:
-                parts.append(f"**{lbl}:** {v}{unit}")
-        if parts:
-            lines.append("  ".join(parts))
+            lines.append(f"**{lbl}:** {v}{unit}" if v else f"**{lbl}:** *(not recorded)*")
         _posture_def = [("Lumbar lordosis","go_lx_lord"),("Thoracic kyphosis","go_tx_kyph"),
                         ("Antalgic lean","go_lean"),("Sway posture","go_sway"),
                         ("Breathing","go_breath"),("Scapular L","go_scap_l"),
@@ -896,31 +892,24 @@ def _render_objective_md(obj: dict) -> list:
                         ("Undress/transfer","go_transfer")]
         posture_rows = []
         for lbl, key in _posture_def:
-            v = gen.get(key) or ""
-            if not v:
-                continue
+            v = gen.get(key) or "—"
             cmt = gen.get(f"{key}_cmt", "").strip()
             posture_rows.append([lbl, f"{v} — {cmt}" if cmt else v])
-        if posture_rows:
-            lines.append("**Posture:**")
-            lines.extend(_md_table(["", "Finding"], posture_rows))
+        lines.append("**Posture:**")
+        lines.extend(_md_table(["", "Finding"], posture_rows))
         _func_def = [("Gait","go_gait"),("SLS Left","go_sls_l"),
                      ("SLS Right","go_sls_r"),("Sit-to-stand","go_sts")]
         func_rows = []
         for lbl, key in _func_def:
-            v = gen.get(key) or ""
-            if not v:
-                continue
+            v = gen.get(key) or "—"
             cmt = gen.get(f"{key}_cmt", "").strip()
             func_rows.append([lbl, f"{v} — {cmt}" if cmt else v])
-        if func_rows:
-            lines.append("**Functional Movement:**")
-            lines.extend(_md_table(["", "Finding"], func_rows))
+        lines.append("**Functional Movement:**")
+        lines.extend(_md_table(["", "Finding"], func_rows))
         for key, lbl in [("go_posture_notes","*Posture notes*"),
                           ("go_functional_notes","*Functional notes*")]:
             v = gen.get(key, "").strip()
-            if v:
-                lines.append(f"{lbl}: {v}")
+            lines.append(f"{lbl}: {v}" if v else f"{lbl}: *(empty)*")
         lines.append("")
 
     # ── 02 Active Movement ────────────────────────────────────────────────────
@@ -936,23 +925,19 @@ def _render_objective_md(obj: dict) -> list:
                 def _cell(p, s):
                     v   = act.get(f"{p}_{s}_range", "") or ""
                     ps  = act.get(f"{p}_{s}_ps") or ""
-                    txt = f"{v}°" if v else ""
+                    txt = f"{v}°" if v else "—"
                     return f"{txt} {ps}".strip() if ps else txt
                 ax_l = _cell(prefix, "ax_l"); reax_l = _cell(prefix, "reax_l")
                 if bilateral:
-                    if ax_l or reax_l:
-                        tbl_rows.append([label, ax_l, "", reax_l, ""])
+                    tbl_rows.append([label, ax_l, "—", reax_l, "—"])
                 else:
                     ax_r = _cell(prefix, "ax_r"); reax_r = _cell(prefix, "reax_r")
-                    if any([ax_l, ax_r, reax_l, reax_r]):
-                        tbl_rows.append([label, ax_l, ax_r, reax_l, reax_r])
-            if tbl_rows:
-                lines.append(f"**{title}:**")
-                lines.extend(_md_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows))
+                    tbl_rows.append([label, ax_l, ax_r, reax_l, reax_r])
+            lines.append(f"**{title}:**")
+            lines.extend(_md_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows))
         for key, lbl in [("am_lx_notes","*Lumbar notes*"),("am_tx_notes","*Thoracic notes*")]:
             v = act.get(key, "").strip()
-            if v:
-                lines.append(f"{lbl}: {v}")
+            lines.append(f"{lbl}: {v}" if v else f"{lbl}: *(empty)*")
         lines.append("")
 
     # ── 03 Passive Movement ───────────────────────────────────────────────────
@@ -962,25 +947,20 @@ def _render_objective_md(obj: dict) -> list:
                   ("Tx Rot L","op_tx_rot_l"),("Tx Rot R","op_tx_rot_r"),
                   ("Lx Flexion","op_lx_flex"),("Lx Extension","op_lx_ext"),
                   ("Lx Lat Fl L","op_lx_lf_l"),("Lx Lat Fl R","op_lx_lf_r")]
-        op_rows = [[lbl, pas.get(f"{p}_ef") or "", pas.get(f"{p}_resp") or ""]
-                   for lbl, p in op_def
-                   if pas.get(f"{p}_ef") or pas.get(f"{p}_resp")]
-        if op_rows:
-            lines.append("**Overpressure:**")
-            lines.extend(_md_table(["Movement", "End-feel", "Response"], op_rows))
+        op_rows = [[lbl, pas.get(f"{p}_ef") or "—", pas.get(f"{p}_resp") or "—"]
+                   for lbl, p in op_def]
+        lines.append("**Overpressure:**")
+        lines.extend(_md_table(["Movement", "End-feel", "Response"], op_rows))
         paivm_levels = ["L5","L4","L3","L2","L1","T12","T11","T10","T9","T8"]
-        paivm_rows = [[lv, pas.get(f"pm_{lv}_c") or "",
-                          pas.get(f"pm_{lv}_ul_l") or "",
-                          pas.get(f"pm_{lv}_ul_r") or ""]
-                      for lv in paivm_levels
-                      if any(pas.get(f"pm_{lv}_{d}") for d in ("c","ul_l","ul_r"))]
-        if paivm_rows:
-            lines.append("**PAIVMs:**")
-            lines.extend(_md_table(["Level", "Central", "UL Left", "UL Right"], paivm_rows))
+        paivm_rows = [[lv, pas.get(f"pm_{lv}_c") or "—",
+                          pas.get(f"pm_{lv}_ul_l") or "—",
+                          pas.get(f"pm_{lv}_ul_r") or "—"]
+                      for lv in paivm_levels]
+        lines.append("**PAIVMs:**")
+        lines.extend(_md_table(["Level", "Central", "UL Left", "UL Right"], paivm_rows))
         for key, lbl in [("pm_op_notes","*OP notes*"),("pm_paivm_notes","*PAIVM notes*")]:
             v = pas.get(key, "").strip()
-            if v:
-                lines.append(f"{lbl}: {v}")
+            lines.append(f"{lbl}: {v}" if v else f"{lbl}: *(empty)*")
         lines.append("")
 
     # ── 04 Neurological ───────────────────────────────────────────────────────
@@ -991,52 +971,42 @@ def _render_objective_md(obj: dict) -> list:
             ("L2 Hip flex","nr_l2"),("L3 Knee ext","nr_l3"),("L4 Ankle DF","nr_l4"),
             ("L5 GT ext/EHL","nr_l5"),("S1 PF/evert","nr_s1"),("S2 Ham/KF","nr_s2"),
         ]
-        neuro_rows = [[lbl, neu.get(f"{p}_l") or "", neu.get(f"{p}_r") or ""]
-                      for lbl, p in neuro_def
-                      if neu.get(f"{p}_l") or neu.get(f"{p}_r")]
-        if neuro_rows:
-            lines.extend(_md_table(["Test", "Left", "Right"], neuro_rows))
+        neuro_rows = [[lbl, neu.get(f"{p}_l") or "—", neu.get(f"{p}_r") or "—"]
+                      for lbl, p in neuro_def]
+        lines.extend(_md_table(["Test", "Left", "Right"], neuro_rows))
         _derm_def_nr = [("L2 Ant thigh","sn_l2"),("L3 Med knee","sn_l3"),
                         ("L4 Med leg","sn_l4"),("L5 Lat leg/GT","sn_l5"),
                         ("S1 Lat foot","sn_s1"),("S2 Post thigh","sn_s2")]
-        derm_rows_nr = [[lbl, neu.get(f"{p}_l") or "", neu.get(f"{p}_r") or ""]
-                        for lbl, p in _derm_def_nr
-                        if neu.get(f"{p}_l") or neu.get(f"{p}_r")]
-        if derm_rows_nr:
-            lines.append("**Dermatomes:**")
-            lines.extend(_md_table(["Level", "Left", "Right"], derm_rows_nr))
+        derm_rows_nr = [[lbl, neu.get(f"{p}_l") or "—", neu.get(f"{p}_r") or "—"]
+                        for lbl, p in _derm_def_nr]
+        lines.append("**Dermatomes:**")
+        lines.extend(_md_table(["Level", "Left", "Right"], derm_rows_nr))
         nd_def = [("SLR","nr_slr"),("Slump","nr_slump"),("PKF","nr_pkf")]
         nd_rows = []
         for lbl, p in nd_def:
-            ld = neu.get(f"{p}_l_deg","") or ""; lr = neu.get(f"{p}_l_resp","") or ""
-            rd = neu.get(f"{p}_r_deg","") or ""; rr = neu.get(f"{p}_r_resp","") or ""
-            if any([ld, lr, rd, rr]):
-                nd_rows.append([lbl, f"{ld}°" if ld else "", lr,
-                                     f"{rd}°" if rd else "", rr])
-        if nd_rows:
-            lines.append("**Neurodynamics:**")
-            lines.extend(_md_table(["Test", "L °", "L Resp", "R °", "R Resp"], nd_rows))
+            ld = neu.get(f"{p}_l_deg","") or ""; lr = neu.get(f"{p}_l_resp","") or "—"
+            rd = neu.get(f"{p}_r_deg","") or ""; rr = neu.get(f"{p}_r_resp","") or "—"
+            nd_rows.append([lbl, f"{ld}°" if ld else "—", lr,
+                                  f"{rd}°" if rd else "—", rr])
+        lines.append("**Neurodynamics:**")
+        lines.extend(_md_table(["Test", "L °", "L Resp", "R °", "R Resp"], nd_rows))
         umn_items = [("Hyperreflexia","nr_umn_hyper"),("Babinski +","nr_umn_bab"),
                      ("Clonus","nr_umn_clonus"),("Romberg +","nr_umn_romberg"),
                      ("Coord impaired","nr_umn_coord")]
-        umn_pos = [lbl for lbl, uid in umn_items if neu.get(uid) is True]
-        umn_neg = [lbl for lbl, uid in umn_items if neu.get(uid) is False]
-        if umn_pos: lines.append(f"**UMN signs +ve:** {', '.join(umn_pos)}")
-        if umn_neg: lines.append(f"**UMN signs -ve:** {', '.join(umn_neg)}")
+        umn_rows = [[lbl, "Yes" if neu.get(uid) is True else "No" if neu.get(uid) is False else "*(not answered)*"]
+                    for lbl, uid in umn_items]
+        lines.append("**UMN Signs:**")
+        lines.extend(_md_table(["Sign", "Result"], umn_rows))
         v = neu.get("nr_notes", "").strip()
-        if v: lines.append(f"*Notes:* {v}")
+        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
         lines.append("")
 
     # ── 05 Sensory ────────────────────────────────────────────────────────────
     if sen:
         lines.append("### 05 Sensory")
-        ppt = sen.get("sn_ppt")
+        ppt = sen.get("sn_ppt") or "*(not recorded)*"
         ppt_detail = sen.get("sn_ppt_detail", "").strip()
-        if ppt:
-            ppt_str = f"**PPT (algometer):** {ppt}"
-            if ppt_detail:
-                ppt_str += f" — {ppt_detail}"
-            lines.append(ppt_str)
+        lines.append(f"**PPT (algometer):** {ppt}" + (f" — {ppt_detail}" if ppt_detail else ""))
         hypo_items = [("Sharp/blunt","sn_sharp_blunt",True),("Two-point discrim","sn_tpd",True),
                       ("Light touch","sn_lt",True),("Body perception","sn_body",False)]
         hyper_items = [("Static allodynia","sn_static_allodynia",True),
@@ -1046,20 +1016,17 @@ def _render_objective_md(obj: dict) -> list:
                        ("Cold hyperalgesia","sn_cold",False),
                        ("Heat hyperalgesia","sn_heat",False),
                        ("Temporal summation","sn_temporal_sum",True)]
-        for sec_lbl, items in [("Hyposensitivity", hypo_items),
-                                ("Hypersensitivity", hyper_items)]:
-            found = []
+        for sec_lbl, items in [("Hyposensitivity", hypo_items), ("Hypersensitivity", hyper_items)]:
+            rows = []
             for lbl, sid, has_detail in items:
                 v = sen.get(sid)
-                if v is True:
-                    detail = sen.get(f"{sid}_detail", "").strip() if has_detail else ""
-                    found.append(lbl + (f": {detail}" if detail else ""))
-                elif v is False:
-                    found.append(f"~~{lbl}~~")
-            if found:
-                lines.append(f"**{sec_lbl}:** {'; '.join(found)}")
+                state = "Yes" if v is True else "No" if v is False else "*(not answered)*"
+                detail = sen.get(f"{sid}_detail", "").strip() if has_detail and v is True else ""
+                rows.append([lbl, f"{state} — {detail}" if detail else state])
+            lines.append(f"**{sec_lbl}:**")
+            lines.extend(_md_table(["Test", "Result"], rows))
         v = sen.get("sn_notes", "").strip()
-        if v: lines.append(f"*Notes:* {v}")
+        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
         lines.append("")
 
     # ── 06 Muscle Testing ─────────────────────────────────────────────────────
@@ -1067,40 +1034,33 @@ def _render_objective_md(obj: dict) -> list:
         lines.append("### 06 Muscle Testing")
         ml_def = [("QL (side sit)","ml_ql"),("Thomas test","ml_thomas"),
                   ("Hamstrings SLR","ml_ham")]
-        ml_rows = [[lbl, mus.get(f"{p}_l") or "", mus.get(f"{p}_r") or ""]
-                   for lbl, p in ml_def
-                   if mus.get(f"{p}_l") or mus.get(f"{p}_r")]
-        if ml_rows:
-            lines.append("**Muscle Length:**")
-            lines.extend(_md_table(["Test", "Left", "Right"], ml_rows))
+        ml_rows = [[lbl, mus.get(f"{p}_l") or "—", mus.get(f"{p}_r") or "—"]
+                   for lbl, p in ml_def]
+        lines.append("**Muscle Length:**")
+        lines.extend(_md_table(["Test", "Left", "Right"], ml_rows))
         ma_def = [("Tx erector spinae","ma_tx_es"),("Transversus abd","ma_tva"),
                   ("Lumbar multifidus","ma_lmf")]
-        ma_rows = [[lbl, mus.get(mid) or ""] for lbl, mid in ma_def if mus.get(mid)]
-        if ma_rows:
-            lines.append("**Muscle Activation:**")
-            lines.extend(_md_table(["Test", "Finding"], ma_rows))
-        trunk = []
-        if mus.get("st_flex"): trunk.append(f"**Flexion:** {mus['st_flex']} reps/min")
-        if mus.get("st_ext"):  trunk.append(f"**Extension:** {mus['st_ext']} raises/min")
-        if trunk: lines.append("**Trunk Strength:** " + "  ".join(trunk))
+        ma_rows = [[lbl, mus.get(mid) or "—"] for lbl, mid in ma_def]
+        lines.append("**Muscle Activation:**")
+        lines.extend(_md_table(["Test", "Finding"], ma_rows))
+        lines.append(f"**Trunk flexion:** {mus.get('st_flex','') or '*(not recorded)*'} reps/min")
+        lines.append(f"**Trunk extension:** {mus.get('st_ext','') or '*(not recorded)*'} raises/min")
         hip_def = [("Hip flexion","sh_hip_flex"),("Hip extension","sh_hip_ext"),
                    ("Hip abduction","sh_hip_abd"),("Hip adduction","sh_hip_add"),
                    ("Hip int rotation","sh_hip_ir"),("Hip ext rotation","sh_hip_er")]
-        hip_rows = [[lbl, mus.get(f"{p}_l") or "", mus.get(f"{p}_r") or ""]
-                    for lbl, p in hip_def
-                    if mus.get(f"{p}_l") or mus.get(f"{p}_r")]
-        if hip_rows:
-            lines.append("**Hip Strength (Wagner FPX kg):**")
-            lines.extend(_md_table(["Movement", "Left kg", "Right kg"], hip_rows))
+        hip_rows = [[lbl, mus.get(f"{p}_l") or "—", mus.get(f"{p}_r") or "—"]
+                    for lbl, p in hip_def]
+        lines.append("**Hip Strength (Wagner FPX kg):**")
+        lines.extend(_md_table(["Movement", "Left kg", "Right kg"], hip_rows))
         sij_items = [("Sacral thrust","sij_sacral"),("Post thigh thrust","sij_ptt"),
                      ("Distraction supine","sij_dist"),("Compression s/l","sij_comp"),
                      ("Gaenslen","sij_gaenslen"),("ASLR compression","sij_aslr")]
-        sij_pos = [lbl for lbl, sid in sij_items if mus.get(sid) is True]
-        sij_neg = [lbl for lbl, sid in sij_items if mus.get(sid) is False]
-        if sij_pos: lines.append(f"**SIJ Provocation +ve:** {', '.join(sij_pos)}")
-        if sij_neg: lines.append(f"**SIJ Provocation -ve:** {', '.join(sij_neg)}")
+        sij_rows = [[lbl, "Yes" if mus.get(sid) is True else "No" if mus.get(sid) is False else "*(not answered)*"]
+                    for lbl, sid in sij_items]
+        lines.append("**SIJ Provocation:**")
+        lines.extend(_md_table(["Test", "Result"], sij_rows))
         v = mus.get("mu_notes", "").strip()
-        if v: lines.append(f"*Notes:* {v}")
+        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
         lines.append("")
 
     # ── 07 Functional ─────────────────────────────────────────────────────────
@@ -1109,35 +1069,31 @@ def _render_objective_md(obj: dict) -> list:
         obs_def = [("Gait","ft_gait"),("Prone hip rot","ft_phr"),
                    ("Sit-to-stand","ft_sts_q"),("SLS Left","ft_sls_l"),
                    ("SLS Right","ft_sls_r")]
-        obs_rows = [[lbl, func.get(fid) or ""] for lbl, fid in obs_def if func.get(fid)]
-        if obs_rows:
-            lines.append("**Movement Observation:**")
-            lines.extend(_md_table(["Test", "Finding"], obs_rows))
-        bal_def = [("Both legs",["ft_bal_both"],"s"),("Feet together",["ft_bal_feet"],"s"),
-                   ("Tandem",["ft_bal_tandem"],"s"),
-                   ("SLS eyes open",["ft_sls_eo_l","ft_sls_eo_r"],"s"),
-                   ("SLS eyes closed",["ft_sls_ec_l","ft_sls_ec_r"],"s"),
-                   ("SLS foam 10cm",["ft_sls_foam_l","ft_sls_foam_r"],"s")]
+        obs_rows = [[lbl, func.get(fid) or "—"] for lbl, fid in obs_def]
+        lines.append("**Movement Observation:**")
+        lines.extend(_md_table(["Test", "Finding"], obs_rows))
+        bal_def = [("Both legs",["ft_bal_both"]),("Feet together",["ft_bal_feet"]),
+                   ("Tandem",["ft_bal_tandem"]),
+                   ("SLS eyes open",["ft_sls_eo_l","ft_sls_eo_r"]),
+                   ("SLS eyes closed",["ft_sls_ec_l","ft_sls_ec_r"]),
+                   ("SLS foam 10cm",["ft_sls_foam_l","ft_sls_foam_r"])]
         bal_rows = []
-        for lbl, ids, _ in bal_def:
-            vals = [func.get(i,"") or "" for i in ids]
+        for lbl, ids in bal_def:
+            vals = [func.get(i,"") or "—" for i in ids]
             if len(ids) == 1:
-                vals = [vals[0], ""]
-            if any(vals):
-                bal_rows.append([lbl] + vals)
-        if bal_rows:
-            lines.append("**Balance (Steffen 2002):**")
-            lines.extend(_md_table(["Test", "Left s", "Right s"], bal_rows))
+                vals = [vals[0], "—"]
+            bal_rows.append([lbl] + vals)
+        lines.append("**Balance (Steffen 2002):**")
+        lines.extend(_md_table(["Test", "Left s", "Right s"], bal_rows))
         cap_def = [("TUG (3m)","ft_tug","s"),("5× Sit-to-Stand","ft_sts5","s"),
                    ("10m comfortable","ft_10m_e","m/s"),("10m fast","ft_10m_f","m/s"),
                    ("2 min walk","ft_2mw","m")]
-        cap_rows = [[lbl, f"{func.get(fid,'')} {unit}".strip()]
-                    for lbl, fid, unit in cap_def if func.get(fid,"")]
-        if cap_rows:
-            lines.append("**Timed Capability:**")
-            lines.extend(_md_table(["Test", "Result"], cap_rows))
+        cap_rows = [[lbl, f"{func.get(fid,'') or '—'} {unit}".strip() if func.get(fid,"") else "—"]
+                    for lbl, fid, unit in cap_def]
+        lines.append("**Timed Capability:**")
+        lines.extend(_md_table(["Test", "Result"], cap_rows))
         v = func.get("ft_notes", "").strip()
-        if v: lines.append(f"*Notes:* {v}")
+        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
         lines.append("")
 
     return lines
@@ -1360,11 +1316,14 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
         lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
 
 
-def export_session_report(session_file: str) -> str:
+def export_session_report(session_file: str) -> str:  # noqa: C901
     """
-    Write a compact Markdown assessment report to <session_dir>/<name>_report.md.
+    Write a comprehensive Markdown report to <session_dir>/<name>_report.md.
+    All fields shown; empty ones marked *(not answered)* / *(empty)*.
     Returns the output path, or empty string on failure.
     """
+    import time as _time
+
     try:
         data = json.loads(Path(session_file).read_text()) if Path(session_file).exists() else {}
     except Exception as e:
@@ -1389,232 +1348,672 @@ def export_session_report(session_file: str) -> str:
     session_name = data.get("session_name", "session")
     out_path     = session_dir / f"{session_name}_report.md"
 
-    import time as _time
-    created = data.get("created", 0)
-    date_str = _time.strftime("%d %b %Y", _time.localtime(created)) if created else ""
-
+    a = data.get("assessment", {})
     lines: list[str] = []
 
-    def h1(text):  lines.append(f"# {text}\n")
-    def h2(text):  lines.append(f"## {text}")
-    def row(*pairs): r = _row(*pairs); lines.append(r) if r else None
-    def text(label, val):
-        if val and val.strip():
-            lines.append(f"**{label}:** {val.strip()}")
-    def gap(): lines.append("")
+    # ── helpers ────────────────────────────────────────────────────────────
+    def _v(val) -> str:
+        if val is True:  return "Yes"
+        if val is False: return "No"
+        if val is None:  return "*(not answered)*"
+        s = str(val).strip()
+        return s if s else "*(empty)*"
 
-    a = data.get("assessment", {})
+    def sec(title):
+        lines.append(f"\n---\n\n## {title}\n")
 
-    # ── Title ──────────────────────────────────────────────────────────────
-    pid   = data.get("patient_id", "")
-    label = data.get("session_label", "")
-    h1(f"Physiotherapy Assessment — {pid}")
-    row(("Session", label), ("Date", date_str))
-    gap()
+    def sub(title):
+        lines.append(f"\n### {title}\n")
 
-    # ── 01 Consent ─────────────────────────────────────────────────────────
-    c = a.get("consent", {})
-    if isinstance(c, dict) and c:
-        h2("01 Consent")
-        row(("Preferred name", c.get("preferred_name")),
-            ("Consent to proceed", _yn(c.get("consent_to_proceed"))),
-            ("Consent (sensitive topics)", _yn(c.get("consent_sensitive_topics"))))
-        row(("Pain multifactorial explained", _yn(c.get("pain_multifactorial_explained"))),
-            ("Education as treatment explained", _yn(c.get("education_as_treatment_explained"))))
-        text("Reason for attending", c.get("reason_for_attending"))
-        text("Patient expectations", c.get("patient_expectations"))
-        row(("Cause understanding", _yn(c.get("cause_understanding"))),
-            ("Detail", c.get("cause_understanding_detail")))
-        text("Prognosis expectations", c.get("prognosis_expectations"))
-        text("Treatment preference", c.get("treatment_preference"))
-        gap()
+    def f(fid, d):
+        lines.append(f"**{_label(fid)}:** {_v(d.get(fid))}")
 
-    # ── 02 Subjective ──────────────────────────────────────────────────────
-    s = a.get("subjective", {})
-    if isinstance(s, dict) and s:
-        h2("02 Subjective Examination")
-        text("History", s.get("history"))
-        row(("Duration", s.get("duration")), ("Onset", s.get("onset")))
-        row(("Current NRS", s.get("nrs_current")),
-            ("Best", s.get("nrs_best")), ("Worst", s.get("nrs_worst")))
-        row(("24-hr pattern", s.get("behaviour_24hr")))
-        row(("Course", s.get("course")),
-            ("Improving", _yn(s.get("course_improving"))),
-            ("Worsening", _yn(s.get("course_worsening"))))
-        text("Context at onset", s.get("context_at_onset"))
-        text("Previous treatment", s.get("previous_treatment"))
-        row(("Sleep difficulty", _yn(s.get("sleep_difficulty"))),
-            ("Night waking", _yn(s.get("night_waking"))),
-            ("Total sleep hrs", s.get("total_sleep_hours")))
-        row(("Aggravating factors", s.get("aggravating_factors")))
-        row(("Easing factors", s.get("easing_factors")))
-        row(("Morning stiffness", _yn(s.get("morning_stiffness"))),
-            ("Stiffness duration", s.get("morning_stiffness_duration")))
-        row(("Mood influences", _yn(s.get("mood_influences"))),
-            ("Psychological distress", _yn(s.get("psychological_distress"))))
-        row(("Self-harm risk", _yn(s.get("self_harm_risk"))),
-            ("Harm plan", _yn(s.get("harm_plan"))))
-        row(("PSEQ confidence", s.get("confidence_score")))
-        gap()
+    def txt(fid, d):
+        val = (d.get(fid) or "").strip()
+        label = _label(fid)
+        if val and "\n" in val:
+            lines.append(f"**{label}:**  ")
+            for row in val.split("\n"):
+                lines.append(row)
+            lines.append("")
+        elif val:
+            lines.append(f"**{label}:** {val}")
+        else:
+            lines.append(f"**{label}:** *(empty)*")
 
-    # ── 03 Medical ─────────────────────────────────────────────────────────
-    m = a.get("medical", {})
-    if isinstance(m, dict) and m:
-        h2("03 Medical Screening")
-        # Red flags
-        rf_map = [
-            ("rf_saddle_anaesthesia", "Saddle anaesthesia"),
-            ("rf_bladder_disturbance", "Bladder disturbance"),
-            ("rf_bowel_disturbance", "Bowel disturbance"),
-            ("rf_bilateral_paraesthesia", "Bilateral paraesthesia"),
-            ("rf_gait_disturbance", "Gait disturbance"),
-        ]
-        positives = [label for fid, label in rf_map if m.get(fid) is True]
-        if positives:
-            lines.append(f"**Red flags +ve:** {', '.join(positives)}")
-        comorbid_map = [
-            ("comorbid_cardiovascular", "Cardiovascular"),
-            ("comorbid_diabetes", "Diabetes"),
-            ("comorbid_cancer", "Cancer"),
-            ("comorbid_inflammatory", "Inflammatory arthritis"),
-            ("comorbid_fibromyalgia", "Fibromyalgia"),
-            ("comorbid_mental_health", "Mental health"),
-            ("comorbid_drug_alcohol", "Drug/alcohol"),
-            ("comorbid_whiplash", "Whiplash"),
-        ]
-        comorbid = [label for fid, label in comorbid_map if m.get(fid) is True]
-        if comorbid:
-            lines.append(f"**Comorbidities:** {', '.join(comorbid)}")
-        meds = [m.get(f"medication_{i}_name", "").strip() for i in range(1, 6)]
-        meds = [x for x in meds if x]
-        if meds:
-            lines.append(f"**Medications:** {', '.join(meds)}")
-        gap()
+    # ── header ──────────────────────────────────────────────────────────────
+    c_hdr = a.get("consent", {}) or {}
+    preferred_name = c_hdr.get("preferred_name", "").strip() or "*(not set)*"
+    created  = data.get("created", 0)
+    date_str = _time.strftime("%d %b %Y %H:%M", _time.localtime(created)) if created else "*(unknown)*"
+    regions  = ", ".join(data.get("regions", [])) or "*(not set)*"
 
-    # ── 04 Pain Classification ─────────────────────────────────────────────
-    pc = a.get("pain_classification", {})
-    if isinstance(pc, dict) and pc:
-        h2("04 Pain Classification")
-        row(("Dominant type", pc.get("summary_dominant")),
-            ("Secondary", pc.get("summary_secondary")))
-        text("Reasoning", pc.get("summary_reasoning"))
-        gap()
+    lines.append("# Physiotherapy Assessment — Full Record")
+    lines.append("")
+    lines.append(f"**Patient:** {preferred_name}  ")
+    lines.append(f"**Date:** {date_str}  ")
+    lines.append(f"**Region:** {regions}  ")
+    lines.append(f"**Session ID:** {data.get('session_name', '')}  ")
+    lines.append("")
 
-    # ── 05 Outcome Measures ────────────────────────────────────────────────
-    om = a.get("outcome_measures", {})
-    if isinstance(om, dict) and om:
-        h2("05 Outcome Measures")
-        score_map = [
-            ("psfs_score", "psfs_interp",    "PSFS"),
-            ("bpi_activity","",              "BPI activity"),
-            ("dass_dep_score","dass_dep_interp","DASS dep"),
-            ("dass_anx_score","dass_anx_interp","DASS anx"),
-            ("dass_str_score","dass_str_interp","DASS stress"),
-            ("pcs_total_score","pcs_total_risk","PCS total"),
-            ("pseq_score","",               "PSEQ"),
-            ("pcl5_score","pcl5_interp",    "PCL-5"),
-            ("isi_score","isi_interp",      "ISI"),
-            ("pbas_score","pbas_interp",    "PBAS"),
-        ]
-        parts = []
-        for sfid, ifid, label in score_map:
-            score = om.get(sfid, "").strip()
-            if score:
-                interp = om.get(ifid, "").strip() if ifid else ""
-                parts.append(f"{label} {score}" + (f" ({interp})" if interp else ""))
-        if parts:
-            lines.append("  ".join(parts))
-        goals = [om.get(f"psfs_goal_{i}", "").strip() for i in range(1, 6)]
-        goals = [g for g in goals if g]
-        if goals:
-            lines.append(f"**PSFS goals:** {'; '.join(goals)}")
-        gap()
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 1: CONSENT & SETUP
+    # ════════════════════════════════════════════════════════════════════════
+    c = a.get("consent", {}) or {}
+    sec("Section 1: Consent & Setup")
 
-    # ── 06 Diagnosis ──────────────────────────────────────────────────────
-    dx = a.get("diagnosis", {})
-    if isinstance(dx, dict) and dx:
-        h2("06 Diagnosis")
-        row(("Duration >3 months", _yn(dx.get("duration_over_3_months"))),
-            ("Mechanism", dx.get("mechanism")))
-        row(("Primary subtype", dx.get("primary_subtype")),
-            ("Severity", dx.get("primary_severity")))
-        row(("Surgical subtype", dx.get("surgical_subtype")),
-            ("Procedure", dx.get("surgical_procedure")))
-        row(("Traumatic subtype", dx.get("traumatic_subtype")),
-            ("Event", dx.get("traumatic_event")))
-        row(("MSK subtype", dx.get("msk_subtype")),
-            ("Pathology", dx.get("msk_pathology")))
-        row(("Neuro subtype", dx.get("neuro_subtype")),
-            ("Lesion", dx.get("neuro_lesion")))
-        row(("Mixed dominant", dx.get("mixed_dominant")))
-        text("Mixed reasoning", dx.get("mixed_reasoning"))
-        goals = [dx.get(f"goal_{i}", "").strip() for i in range(1, 5)]
-        goals = [g for g in goals if g]
-        if goals:
-            lines.append("**SMART Goals:**")
-            for i, g in enumerate(goals, 1):
-                lines.append(f"{i}. {g}")
-        gap()
+    sub("Consent")
+    f("consent_to_proceed",       c)
+    f("consent_sensitive_topics", c)
+    f("preferred_name",           c)
 
-    # ── 07 Barriers ────────────────────────────────────────────────────────
-    br = a.get("barriers", {})
-    if isinstance(br, dict) and br:
-        h2("07 Barriers & Treatment Plan")
-        barrier_map = [
-            ("b_noci_disease",        "Disease/pathology"),
-            ("b_noci_pacing",         "Pacing issues"),
-            ("b_noci_inflammatory",   "Inflammatory features"),
-            ("b_noci_deconditioning", "Deconditioning"),
-            ("b_noci_movement",       "Reduced movement"),
-            ("b_noci_gait",           "Asymmetrical gait"),
-            ("b_noci_strength",       "Strength deficits"),
-            ("b_noci_deep_muscle",    "Deep muscle activation"),
-            ("b_noci_overactivity",   "Muscle overactivity"),
-            ("b_noci_nerve_mech",     "Nerve mechanosensitivity"),
-            ("b_noci_diet",           "Diet/weight"),
-            ("b_neuro_confirmed",     "Neuropathic (confirmed)"),
-            ("b_neuro_unconfirmed",   "Neuropathic (unconfirmed)"),
-            ("b_nocip_moderate",      "Nociplastic/CS"),
-            ("b_nocip_crps",          "CRPS"),
-            ("b_nocip_fnd",           "FND"),
-            ("b_psych_depression",    "Depression"),
-            ("b_psych_anxiety",       "Anxiety"),
-            ("b_psych_stress",        "Stress"),
-            ("b_psych_catastrophising","Catastrophising"),
-            ("b_psych_self_efficacy", "Reduced self-efficacy"),
-            ("b_psych_unhelpful_beliefs","Unhelpful beliefs"),
-            ("b_psych_ptsd",          "PTSD symptoms"),
-            ("b_psych_readiness",     "Unclear readiness"),
-            ("b_sleep_disturbed",     "Disturbed sleep"),
-            ("b_social_home",         "Home/social barriers"),
-            ("b_social_rtw",          "RTW barriers"),
-            ("b_med_red_flag",        "Red flag"),
-            ("b_med_substance",       "Substance use"),
-            ("b_med_as",              "Possible AS"),
-            ("b_med_aaa",             "Possible AAA"),
-            ("b_med_vascular",        "Vascular claudication"),
-            ("b_med_cervical_ha",     "Cervical headache"),
-            ("b_med_medico_legal",    "Medico-legal"),
-        ]
-        present = [label for fid, label in barrier_map if br.get(fid) is True]
-        if present:
-            lines.append(f"**Barriers identified:** {', '.join(present)}")
-        # Treatment plan
-        text("Goal orientation", br.get("tx_goal_orientation"))
-        text("Formulation", br.get("tx_formulation"))
-        text("Program", br.get("tx_program"))
-        text("Home program", br.get("tx_home_program"))
-        text("Psychosocial strategies", br.get("tx_psychosocial"))
-        text("Medical/referral", br.get("tx_medical"))
-        text("RTW plan", br.get("tx_rtw"))
-        # Follow-up
-        text("Next session focus", br.get("fu_next_focus"))
-        text("Monitoring", br.get("fu_monitoring"))
-        gap()
+    sub("Session Framing")
+    f("pain_multifactorial_explained",    c)
+    f("education_as_treatment_explained", c)
+    txt("patient_expectations",           c)
 
-    # ── 04 Objective Examination ───────────────────────────────────────────
+    sub("Patient Perspective (ICE+)")
+    txt("reason_for_attending",      c)
+    f("cause_understanding",         c)
+    txt("cause_understanding_detail", c)
+    txt("prognosis_expectations",    c)
+    txt("treatment_preference",      c)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 2: SUBJECTIVE EXAMINATION
+    # ════════════════════════════════════════════════════════════════════════
+    s = a.get("subjective", {}) or {}
+    sec("Section 2: Subjective Examination")
+
+    sub("Symptoms")
+    f("body_chart_completed", s)
+    txt("symptom_location",    s)
+    txt("symptom_nature",      s)
+
+    sub("History")
+    txt("onset",              s)
+    txt("duration",           s)
+    f("course_improving",     s)
+    f("course_worsening",     s)
+    f("course_stable",        s)
+    f("course_fluctuating",   s)
+    txt("context_at_onset",   s)
+    txt("previous_episodes",  s)
+    txt("previous_treatment", s)
+
+    sub("Flare-ups")
+    f("flareup_rare",              s)
+    f("flareup_occasional",        s)
+    f("flareup_frequent",          s)
+    txt("flareup_triggers",        s)
+    txt("flareup_predictability",  s)
+    txt("flareup_duration",        s)
+
+    sub("Self-Management & Control")
+    f("pain_control_score",       s)
+    txt("flareup_prevention",     s)
+    txt("management_strategies",  s)
+    f("confidence_score",         s)
+
+    sub("Activity & Exercise")
+    txt("pre_activity_level",     s)
+    txt("current_activity_level", s)
+    txt("exercise_type",          s)
+    txt("exercise_dose",          s)
+    txt("exercise_response",      s)
+
+    sub("Work")
+    txt("pre_injury_role",     s)
+    f("pre_injury_hours",      s)
+    txt("pre_injury_duties",   s)
+    txt("current_work_status", s)
+    f("current_hours",         s)
+    txt("current_duties",      s)
+
+    sub("Sleep")
+    txt("bed_description",          s)
+    f("sleep_difficulty",           s)
+    f("sleep_difficulty_severity",  s)
+    f("sleep_onset_time",           s)
+    txt("sleep_position",           s)
+    f("total_sleep_hours",          s)
+    f("night_waking",               s)
+    txt("night_waking_frequency",   s)
+    txt("night_waking_reason",      s)
+    f("bed_exits_count",            s)
+    f("night_waking_severity",      s)
+    txt("morning_stiffness",        s)
+    f("daytime_naps",               s)
+    txt("nap_frequency",            s)
+    f("nap_duration",               s)
+    txt("energy_levels",            s)
+
+    sub("Behaviour of Symptoms")
+    txt("aggravating_factors",     s)
+    txt("easing_factors",          s)
+    f("mood_influences",           s)
+    txt("daily_pattern_comments",  s)
+
+    sub("Psychosocial")
+    txt("social_situation",        s)
+    txt("financial_status",        s)
+    txt("cultural_considerations", s)
+    txt("psychological_distress",  s)
+    txt("screening_tool",          s)
+
+    sub("Suicide / Self-Harm Risk")
+    f("self_harm_risk",   s)
+    txt("harm_plan",      s)
+    txt("harm_means",     s)
+    txt("harm_intent",    s)
+    txt("harm_action",    s)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 3: MEDICAL SCREENING
+    # ════════════════════════════════════════════════════════════════════════
+    m = a.get("medical", {}) or {}
+    sec("Section 3: Medical Screening")
+
+    sub("Comorbidities / PMH")
+    f("no_previous_injuries",    m)
+    txt("previous_injuries",     m)
+    f("comorbid_cancer",         m)
+    f("comorbid_mental_health",  m)
+    f("comorbid_osteoporosis",   m)
+    f("comorbid_inflammatory",   m)
+    f("comorbid_fibromyalgia",   m)
+    f("comorbid_cfs",            m)
+    f("comorbid_ibs",            m)
+    f("comorbid_whiplash",       m)
+    f("comorbid_skin_rash",      m)
+    f("comorbid_drug_alcohol",   m)
+    f("comorbid_fatigue_memory", m)
+    txt("comorbid_other",        m)
+
+    sub("Cardiovascular Risk Factors")
+    f("cvd_hypercholesterolaemia", m)
+    f("cvd_cardiac",               m)
+    f("cvd_vascular",              m)
+    f("cvd_stroke_tia",            m)
+    f("cvd_diabetes",              m)
+    f("cvd_corticosteroids",       m)
+    f("cvd_clotting",              m)
+    f("cvd_ocp",                   m)
+    f("cvd_smoker",                m)
+    f("cvd_postpartum",            m)
+    f("cvd_familial_history",      m)
+
+    sub("Red Flags — Malignancy")
+    f("rf_weight_loss",         m)
+    f("rf_cancer_history",      m)
+    f("rf_age_50_spinal",       m)
+    f("rf_failed_conservative", m)
+
+    sub("Red Flags — Fracture")
+    f("rf_trauma",                   m)
+    f("rf_corticosteroids_fracture", m)
+    f("rf_osteoporosis_fracture",    m)
+
+    sub("Red Flags — Infection")
+    f("rf_fever",           m)
+    f("rf_immunosuppressed", m)
+    f("rf_spinal_procedure", m)
+
+    sub("Red Flags — Cauda Equina (URGENT)")
+    f("rf_saddle_anaesthesia",  m)
+    f("rf_bladder_disturbance", m)
+    f("rf_bowel_disturbance",   m)
+    txt("cauda_equina_action",  m)
+
+    sub("Red Flags — Spinal Cord (URGENT)")
+    f("rf_bilateral_paraesthesia", m)
+    f("rf_gait_disturbance",       m)
+    txt("spinal_cord_action",      m)
+
+    sub("Upper Motor Neurone Signs")
+    f("umn_hyperreflexia",    m)
+    f("umn_babinski",         m)
+    f("umn_clonus",           m)
+    f("umn_romberg",          m)
+    f("umn_coordination",     m)
+    txt("umn_interpretation", m)
+
+    sub("Differential — Ankylosing Spondylitis")
+    f("diff_as_insidious",          m)
+    f("diff_as_lumbar_sij",         m)
+    f("diff_as_inflammatory",       m)
+    f("diff_as_breathing",          m)
+    f("diff_as_fever_weight_loss",  m)
+    f("diff_as_likelihood",         m)
+    txt("diff_as_action",           m)
+
+    sub("Differential — Abdominal Aortic Aneurysm")
+    f("diff_aaa_pulsating",  m)
+    f("diff_aaa_age_50",     m)
+    f("diff_aaa_cvd_risk",   m)
+    f("diff_aaa_ruptured",   m)
+    f("diff_aaa_likelihood", m)
+    txt("diff_aaa_action",   m)
+
+    sub("Differential — Vascular Claudication")
+    f("diff_vc_non_dermatomal", m)
+    f("diff_vc_age_50",         m)
+    f("diff_vc_cvd_risk",       m)
+    f("diff_vc_walking_pain",   m)
+    f("diff_vc_pvd_signs",      m)
+    f("diff_vc_impotence",      m)
+    f("diff_vc_night_pain",     m)
+    f("diff_vc_likelihood",     m)
+    txt("diff_vc_action",       m)
+
+    sub("Medications")
+    meds_list = m.get("medications", [])
+    if meds_list:
+        med_rows = []
+        for i, med in enumerate(meds_list, 1):
+            name     = (med.get("name", "") or "").strip()
+            dose     = (med.get("dose", "") or "").strip()
+            timing   = (med.get("timing", "") or "").strip()
+            comments = (med.get("comments", "") or "").strip()
+            med_rows.append([str(i), name or "—", dose or "—", timing or "—", comments or "—"])
+        lines.extend(_md_table(["#", "Name", "Dose", "Timing", "Comments"], med_rows))
+    else:
+        lines.append("*(none recorded)*")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 4: PAIN CLASSIFICATION
+    # ════════════════════════════════════════════════════════════════════════
+    pc = a.get("pain_classification", {}) or {}
+    sec("Section 4: Pain Classification")
+
+    sub("Inflammatory Pain Features")
+    f("infl_constant",   pc)
+    f("infl_morning",    pc)
+    f("infl_sleep",      pc)
+    f("infl_activity",   pc)
+    f("infl_likelihood", pc)
+
+    sub("Nociceptive Pain — Subjective Features")
+    f("noci_subj_mechanical",   pc)
+    f("noci_subj_trauma",       pc)
+    f("noci_subj_localised",    pc)
+    f("noci_subj_resolving",    pc)
+    f("noci_subj_analgesia",    pc)
+    f("noci_subj_no_constant",  pc)
+    f("noci_subj_inflammation", pc)
+    f("noci_subj_recent",       pc)
+
+    sub("Nociceptive Pain — Examination Features")
+    f("noci_exam_mechanical",   pc)
+    f("noci_exam_palpation",    pc)
+    f("noci_exam_hyperalgesia", pc)
+    f("noci_exam_antalgic",     pc)
+    f("noci_likelihood",        pc)
+    txt("noci_interpretation",  pc)
+
+    sub("Neuropathic Pain — Subjective Features")
+    f("neuro_subj_quality",         pc)
+    f("neuro_subj_nerve_injury",    pc)
+    f("neuro_subj_neurological",    pc)
+    f("neuro_subj_dermatomal",      pc)
+    f("neuro_subj_medication",      pc)
+    f("neuro_subj_severity",        pc)
+    f("neuro_subj_neural_loading",  pc)
+    f("neuro_subj_dysaesthesia",    pc)
+    f("neuro_subj_spontaneous",     pc)
+
+    sub("Neuropathic Pain — Examination Features")
+    f("neuro_exam_neurodynamic",     pc)
+    f("neuro_exam_neural_palpation", pc)
+    f("neuro_exam_neurology",        pc)
+    f("neuro_exam_antalgic",         pc)
+    f("neuro_exam_hyperalgesia",     pc)
+    f("neuro_likelihood",            pc)
+    txt("neuro_interpretation",      pc)
+
+    sub("Nociplastic Pain — Subjective Features")
+    f("nocip_subj_disproportionate",  pc)
+    f("nocip_subj_persistent",        pc)
+    f("nocip_subj_disproportionate2", pc)
+    f("nocip_subj_widespread",        pc)
+    f("nocip_subj_failed",            pc)
+    f("nocip_subj_psychosocial",      pc)
+    f("nocip_subj_medication",        pc)
+    f("nocip_subj_spontaneous",       pc)
+    f("nocip_subj_disability",        pc)
+    f("nocip_subj_constant",          pc)
+    f("nocip_subj_night_pain",        pc)
+    f("nocip_subj_dysaesthesia",      pc)
+    f("nocip_subj_severity",          pc)
+
+    sub("Nociplastic Pain — Examination Features")
+    f("nocip_exam_disproportionate", pc)
+    f("nocip_exam_hyperalgesia",     pc)
+    f("nocip_exam_diffuse",          pc)
+    f("nocip_exam_psychosocial",     pc)
+    f("nocip_likelihood",            pc)
+    txt("nocip_interpretation",      pc)
+
+    sub("Central Sensitisation")
+    f("csi_score",        pc)
+    f("cs_light",         pc)
+    f("cs_touch",         pc)
+    f("cs_noise",         pc)
+    f("cs_pesticides",    pc)
+    f("cs_temperature",   pc)
+    f("cs_fatigue",       pc)
+    f("cs_sleep",         pc)
+    f("cs_concentration", pc)
+    f("cs_swelling",      pc)
+    f("cs_tingling",      pc)
+
+    sub("Pain Type Summary")
+    f("summary_dominant",        pc)
+    txt("summary_contributing",  pc)
+    txt("summary_reasoning",     pc)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 5: OUTCOME MEASURES
+    # ════════════════════════════════════════════════════════════════════════
+    om = a.get("outcome_measures", {}) or {}
+    sec("Section 5: Outcome Measures")
+
+    sub("Patient Specific Functional Scale (PSFS)")
+    f("psfs_score",  om)
+    f("psfs_interp", om)
+    f("psfs_act_1",  om)
+    f("psfs_act_2",  om)
+    f("psfs_act_3",  om)
+    f("psfs_act_4",  om)
+    f("psfs_act_5",  om)
+
+    sub("Brief Pain Inventory (BPI) — interference /10")
+    f("bpi_activity",  om)
+    f("bpi_mood",      om)
+    f("bpi_walking",   om)
+    f("bpi_work",      om)
+    f("bpi_relations", om)
+    f("bpi_sleep",     om)
+    f("bpi_enjoyment", om)
+
+    sub("DASS-21")
+    f("dass_dep_score",  om)
+    f("dass_dep_interp", om)
+    f("dass_anx_score",  om)
+    f("dass_anx_interp", om)
+    f("dass_str_score",  om)
+    f("dass_str_interp", om)
+
+    sub("Pain Catastrophising Scale (PCS)")
+    f("pcs_rum_score",   om)
+    f("pcs_rum_risk",    om)
+    f("pcs_mag_score",   om)
+    f("pcs_mag_risk",    om)
+    f("pcs_help_score",  om)
+    f("pcs_help_risk",   om)
+    f("pcs_total_score", om)
+    f("pcs_total_risk",  om)
+
+    sub("Pain Self-Efficacy Questionnaire (PSEQ)")
+    f("pseq_score", om)
+
+    sub("PCL-5 (PTSD)")
+    f("pcl5_score",    om)
+    f("pcl5_interp",   om)
+    txt("pcl5_action", om)
+
+    sub("Sleep Measures")
+    f("isi_score",   om)
+    f("isi_interp",  om)
+    f("pbas_score",  om)
+    f("pbas_interp", om)
+
+    sub("Additional Measures")
+    f("add_audit",  om)
+    f("add_dudit",  om)
+    txt("add_epoc", om)
+    txt("add_other", om)
+
+    sub("Hypothesis Testing")
+    hyp_rows = []
+    for i in range(3):
+        measure   = (om.get(f"hyp_{i}_measure",   "") or "").strip() or "—"
+        baseline  = (om.get(f"hyp_{i}_baseline",  "") or "").strip() or "—"
+        interval  = (om.get(f"hyp_{i}_interval",  "") or "").strip() or "—"
+        rationale = (om.get(f"hyp_{i}_rationale", "") or "").strip() or "—"
+        hyp_rows.append([str(i + 1), measure, baseline, interval, rationale])
+    lines.extend(_md_table(["#", "Measure", "Baseline", "Interval", "Rationale"], hyp_rows))
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 6: DIAGNOSIS
+    # ════════════════════════════════════════════════════════════════════════
+    dx = a.get("diagnosis", {}) or {}
+    sec("Section 6: Diagnosis")
+
+    sub("ICD-11 Pathway Selection")
+    f("duration_over_3_months", dx)
+    f("mechanism",              dx)
+
+    sub("Chronic Primary Pain")
+    f("primary_distress",     dx)
+    f("primary_not_other_dx", dx)
+    f("primary_subtype",      dx)
+    f("primary_severity",     dx)
+
+    sub("Chronic Post-Surgical Pain")
+    f("surgical_procedure", dx)
+    f("surgical_subtype",   dx)
+    f("surgical_source",    dx)
+    f("surgical_severity",  dx)
+
+    sub("Chronic Post-Traumatic Pain")
+    f("traumatic_event",    dx)
+    f("traumatic_subtype",  dx)
+    f("traumatic_source",   dx)
+    f("traumatic_severity", dx)
+
+    sub("Chronic Secondary MSK Pain")
+    f("msk_pathology", dx)
+    f("msk_subtype",   dx)
+    f("msk_source",    dx)
+    f("msk_severity",  dx)
+
+    sub("Chronic Neuropathic Pain")
+    f("neuro_lesion",   dx)
+    f("neuro_subtype",  dx)
+    f("neuro_severity", dx)
+
+    sub("Mixed / Indeterminate")
+    f("mixed_dominant",    dx)
+    txt("mixed_reasoning", dx)
+
+    sub("SMART Goals")
+    f("goal_1", dx)
+    f("goal_2", dx)
+    f("goal_3", dx)
+    f("goal_4", dx)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 7: BARRIERS & TREATMENT PLAN
+    # ════════════════════════════════════════════════════════════════════════
+    br = a.get("barriers", {}) or {}
+    sec("Section 7: Barriers & Treatment Plan")
+
+    sub("Physical / Nociceptive Barriers")
+    f("b_noci_disease",        br)
+    f("b_noci_pacing",         br)
+    f("b_noci_inflammatory",   br)
+    f("b_noci_deconditioning", br)
+    f("b_noci_movement",       br)
+    f("bi_movement_region",    br)
+    f("b_noci_gait",           br)
+    f("b_noci_strength",       br)
+    f("bx_strength_glute_max", br)
+    f("bx_strength_glute_med", br)
+    f("bx_strength_iliopsoas", br)
+    f("bx_strength_quads",     br)
+    f("bi_strength_other",     br)
+    f("b_noci_deep_muscle",    br)
+    f("bx_deep_multifidus",    br)
+    f("bx_deep_ta",            br)
+    f("bx_deep_erector",       br)
+    f("bi_deep_other",         br)
+    f("b_noci_overactivity",   br)
+    f("bx_over_erector",       br)
+    f("bx_over_ql",            br)
+    f("bx_over_ra",            br)
+    f("bx_over_obliques",      br)
+    f("bx_over_piriformis",    br)
+    f("bx_over_iliopsoas",     br)
+    f("bx_over_hamstrings",    br)
+    f("bx_over_adductors",     br)
+    f("bi_over_other",         br)
+    f("b_noci_nerve_mech",     br)
+    f("bi_nerve_region",       br)
+    f("b_noci_diet",           br)
+
+    sub("Neuropathic Barriers")
+    f("b_neuro_confirmed",   br)
+    f("b_neuro_unconfirmed", br)
+
+    sub("Nociplastic / Central Sensitisation Barriers")
+    f("b_nocip_moderate", br)
+    f("b_nocip_crps",     br)
+    f("b_nocip_fnd",      br)
+
+    sub("Psychological Barriers")
+    f("b_psych_depression",        br)
+    f("bx_dep_severity",           br)
+    f("bx_dep_psychiatry",         br)
+    f("b_psych_anxiety",           br)
+    f("bx_anx_severity",           br)
+    f("bx_anx_psychiatry",         br)
+    f("b_psych_stress",            br)
+    f("bx_stress_severity",        br)
+    f("bx_stress_psychiatry",      br)
+    f("b_psych_catastrophising",   br)
+    f("b_psych_self_efficacy",     br)
+    f("b_psych_unhelpful_beliefs", br)
+    f("bx_belief_expectations",    br)
+    f("bx_belief_symptom_focus",   br)
+    f("bx_belief_cure_focus",      br)
+    f("bx_belief_further_tx",      br)
+    f("b_psych_ptsd",              br)
+    f("bx_ptsd_mechanism",         br)
+    f("bx_ptsd_psychiatry",        br)
+    f("b_psych_readiness",         br)
+
+    sub("Sleep & Social / Contextual Barriers")
+    f("b_sleep_disturbed",     br)
+    f("b_social_home",         br)
+    f("bx_soc_family_support", br)
+    f("bx_soc_social_support", br)
+    f("bx_soc_relationship",   br)
+    f("bx_soc_personal_rel",   br)
+    f("bx_soc_financial",      br)
+    f("bx_soc_residential",    br)
+    f("bx_soc_distance",       br)
+    f("b_social_rtw",          br)
+
+    sub("Medical / Systemic Barriers")
+    f("b_med_red_flag",      br)
+    f("bi_red_flag_detail",  br)
+    f("b_med_substance",     br)
+    f("bi_substance_detail", br)
+    f("b_med_as",            br)
+    f("b_med_aaa",           br)
+    f("b_med_vascular",      br)
+    f("b_med_cervical_ha",   br)
+    f("b_med_medico_legal",  br)
+
+    sub("Custom Barriers")
+    f("custom_1_barrier",  br)
+    f("custom_1_strategy", br)
+    f("custom_2_barrier",  br)
+    f("custom_2_strategy", br)
+
+    sub("Treatment Plan Summary")
+    f("tx_pain_type",           br)
+    f("tx_debunk_radiology",    br)
+    f("tx_consent_explanation", br)
+    txt("tx_goal_orientation",  br)
+    txt("tx_formulation",       br)
+    txt("tx_program",           br)
+    txt("tx_home_program",      br)
+    txt("tx_psychosocial",      br)
+    txt("tx_medical",           br)
+    txt("tx_rtw",               br)
+
+    sub("Session 1 Treatment")
+    txt("s1_education",     br)
+    txt("s1_experiential",  br)
+    f("s1_consent_content", br)
+    f("s1_confidence_nrs",  br)
+    f("hw_online_module",   br)
+    f("hw_mindfulness",     br)
+    f("hw_goal_sheet",      br)
+    f("hw_activity_diary",  br)
+    f("hw_sleep_diary",     br)
+    txt("s1_hw_other",      br)
+    f("tx_email_obtained",  br)
+    f("tx_display_book",    br)
+
+    sub("Day 1 Checklist")
+    f("d1_explanation",       br)
+    f("d1_session2",          br)
+    f("d1_hypothesis",        br)
+    f("d1_diagnosis",         br)
+    f("d1_values",            br)
+    f("d1_evidence",          br)
+    f("d1_plan",              br)
+    f("d1_prognosis",         br)
+    f("d1_stakeholders",      br)
+    f("d1_confidence_tested", br)
+    f("d1_questionnaires",    br)
+
+    sub("Follow-Up Plan")
+    txt("fu_next_focus",   br)
+    txt("fu_monitoring",   br)
+    f("fu_om_schedule",    br)
+    f("ps_questionnaires", br)
+    f("ps_eppoc",          br)
+    f("ps_ptsd_scored",    br)
+    f("ps_isi_pbas",       br)
+    f("ps_csi",            br)
+    f("ps_audit_dudit",    br)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SCRATCHPAD
+    # ════════════════════════════════════════════════════════════════════════
+    sp = a.get("scratchpad", {}) or {}
+    sec("Scratchpad Notes")
+    notes = (sp.get("notes") or "").strip()
+    if notes:
+        for row in notes.split("\n"):
+            lines.append(row)
+    else:
+        lines.append("*(empty)*")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # BODY CHART SUMMARY
+    # ════════════════════════════════════════════════════════════════════════
+    subj_chart = data.get("subjective", {}) or {}
+    obj_chart  = data.get("objective",  {}) or {}
+    sec("Body Chart Summary")
+    lines.append(f"**Symptom strokes drawn:** {len(subj_chart.get('strokes', []))}")
+    lines.append(f"**Note annotations:** {len(subj_chart.get('notes', []))}")
+    lines.append(f"**Arrows:** {len(subj_chart.get('arrows', []))}")
+    lines.append(f"**Objective zones:** {len(obj_chart.get('zones', []))}")
+    lines.append(f"**Measurement points (PPT):** {len(obj_chart.get('points', []))}")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # OBJECTIVE EXAMINATION
+    # ════════════════════════════════════════════════════════════════════════
     obj_lines = _render_objective_md(obj_assessment)
     if obj_lines:
+        lines.append("")
+        lines.append("---")
+        lines.append("")
         lines.extend(obj_lines)
 
     # ── Write ──────────────────────────────────────────────────────────────

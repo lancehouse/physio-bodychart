@@ -28,7 +28,6 @@ dev = [
 
 [project.scripts]
 physio-assessment = "physio_assessment.main:main"
-physio-objective  = "physio_assessment.objective.main:main"
 
 [tool.setuptools]
 packages = [

@@ -38,6 +38,7 @@ from .storage import (
     load_scratchpad,
     save_all_sections,
     save_raw_report,
+    export_session_report,
     assessment_path,
     save_objective,
     load_objective,
@@ -562,8 +563,9 @@ class AssessmentView(Container):
         self._refresh_nav_indicators(nav_data)
         self._update_medical_tab_color()
 
-        # Regenerate raw report (obsidian-style continuous write)
+        # Regenerate both reports on every save
         save_raw_report(self.session_file)
+        export_session_report(self.session_file)
 
         self.post_message(self.SaveStateChanged("saved"))
 

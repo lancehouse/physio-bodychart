@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from textual.app import ComposeResult
+from textual.app import ComposeResult, on
 from textual.containers import Container, Vertical, ScrollableContainer
 from textual.message import Message
 from textual.widgets import Button, Static
@@ -15,7 +15,7 @@ from .sections.neurological import NeurologicalSection
 from .sections.sensory import SensorySection
 from .sections.muscle import MuscleSection
 from .sections.functional import FunctionalSection
-from ..storage import objective_path, save_objective, write_focus_signal
+from ..storage import objective_path, save_objective, write_focus_signal, save_raw_report, export_session_report
 
 
 logger = logging.getLogger(__name__)
@@ -212,6 +212,16 @@ class ObjectiveAssessmentView(Container):
         if self.session_file:
             write_focus_signal(self.session_file, "tui")
 
+    @on(GeneralSection.FieldChanged)
+    @on(ActiveMovementSection.FieldChanged)
+    @on(PassiveMovementSection.FieldChanged)
+    @on(NeurologicalSection.FieldChanged)
+    @on(SensorySection.FieldChanged)
+    @on(MuscleSection.FieldChanged)
+    @on(FunctionalSection.FieldChanged)
+    def _on_section_field_changed(self) -> None:
+        self._schedule_save()
+
     def _schedule_save(self) -> None:
         if self._save_task:
             self._save_task.cancel()
@@ -248,4 +258,6 @@ class ObjectiveAssessmentView(Container):
             sections_complete[section_id] = section.is_complete()
 
         save_objective(self.session_file, assessment_data, sections_complete)
+        save_raw_report(self.session_file)
+        export_session_report(self.session_file)
         self.post_message(self.SaveStateChanged("saved"))
