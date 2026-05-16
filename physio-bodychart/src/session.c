@@ -257,6 +257,24 @@ gboolean session_export_combined_png(AppState *app)
     return TRUE;
 }
 
+gboolean session_export_combined_pdf(AppState *app)
+{
+    if (!app->session_dir[0] || !app->session_name[0]) return FALSE;
+    char png_path[1024];
+    session_build_path(app, "combined.png", png_path, sizeof(png_path));
+
+    const char *home = g_get_home_dir();
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "\"%s/.local/bin/placepdf\" \"%s\"", home, png_path);
+    int ret = system(cmd);
+    if (ret != 0) {
+        fprintf(stderr, "session_export_combined_pdf: placepdf failed (exit %d)\n", ret);
+        return FALSE;
+    }
+    fprintf(stderr, "session_export_combined_pdf: PDF written for %s\n", png_path);
+    return TRUE;
+}
+
 gboolean session_export_png(AppState *app, const char *path)
 {
     double w, h;

@@ -24,6 +24,9 @@ gboolean session_export_obj_png(AppState *app);
 /* Render both subjective (top) and objective (bottom) in one image with labels. */
 gboolean session_export_combined_png(AppState *app);
 
+/* Place the combined PNG onto ~/.local/bin/template.pdf and save as combined.pdf. */
+gboolean session_export_combined_pdf(AppState *app);
+
 /* Render to an arbitrary path (for legacy keyboard shortcut exports). */
 gboolean session_export_png(AppState *app, const char *path);
 gboolean session_export_pdf(AppState *app, const char *path);

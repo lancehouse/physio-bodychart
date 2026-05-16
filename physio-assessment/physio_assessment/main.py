@@ -22,15 +22,16 @@ class PhysioAssessment(App):
     BINDINGS = [
         ("ctrl+q", "quit",              "Quit"),
         ("ctrl+l", "show_session_list", "Sessions"),
-        # Section tab navigation — F1-F8 (priority=True overrides any focused widget)
+        # Section tab navigation — F1-F9 (priority=True overrides any focused widget)
         Binding("f1", "section_consent",          show=False, priority=True),
         Binding("f2", "section_subjective",       show=False, priority=True),
         Binding("f3", "section_medical",          show=False, priority=True),
-        Binding("f4", "section_pain",             show=False, priority=True),
-        Binding("f5", "section_outcomes",         show=False, priority=True),
-        Binding("f6", "section_diagnosis",        show=False, priority=True),
-        Binding("f7", "section_barriers",         show=False, priority=True),
-        Binding("f8", "section_scratchpad",       show=False, priority=True),
+        Binding("f4", "section_objective",        show=False, priority=True),
+        Binding("f5", "section_pain",             show=False, priority=True),
+        Binding("f6", "section_outcomes",         show=False, priority=True),
+        Binding("f7", "section_diagnosis",        show=False, priority=True),
+        Binding("f8", "section_barriers",         show=False, priority=True),
+        Binding("f9", "section_scratchpad",       show=False, priority=True),
         # Subjective subsection jump — Alt+letter (priority=True overrides TextArea)
         Binding("alt+s", "sub_symptoms",             show=False, priority=True),
         Binding("alt+h", "sub_history",              show=False, priority=True),
@@ -117,6 +118,7 @@ class PhysioAssessment(App):
     def action_section_consent(self):    self._goto_section("01_consent")
     def action_section_subjective(self): self._goto_section("02_subjective")
     def action_section_medical(self):    self._goto_section("03_medical")
+    def action_section_objective(self):  self._goto_section("04_objective")
     def action_section_pain(self):       self._goto_section("04_pain_classification")
     def action_section_outcomes(self):   self._goto_section("05_outcome_measures")
     def action_section_diagnosis(self):  self._goto_section("06_diagnosis")

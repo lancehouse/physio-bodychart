@@ -94,6 +94,99 @@ def assessment_path(session_file: str) -> Path:
     return p.parent / p.name.replace("_session.json", "_assessment.json")
 
 
+def objective_path(session_file: str) -> Path:
+    """Return the Objective TUI-owned _objective.json path for a given _session.json path."""
+    p = Path(session_file)
+    return p.parent / p.name.replace("_session.json", "_objective.json")
+
+
+def load_objective(session_file: str) -> dict:
+    """Load objective data from _objective.json. Returns empty dict if absent."""
+    path = objective_path(session_file)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse objective file {path}: {e}")
+        return {}
+
+
+def save_objective(
+    session_file: str,
+    assessment: dict,
+    sections_complete: dict[str, bool],
+) -> bool:
+    """Save all objective sections to _objective.json atomically."""
+    path = objective_path(session_file)
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+
+        if "assessment" not in data:
+            data["assessment"] = {}
+        for key, val in assessment.items():
+            data["assessment"][key] = val
+        data["assessment"]["modified"] = int(time.time())
+
+        if "sections_complete" not in data:
+            data["sections_complete"] = {}
+        for section_id, complete in sections_complete.items():
+            data["sections_complete"][section_id] = complete
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(path)
+
+        logger.debug(f"Saved objective to {path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save objective to {path}: {e}")
+        return False
+
+
+def write_objective_pid(pid: int) -> None:
+    """Write the Objective TUI process PID into session_current.json."""
+    path = Path.home() / ".local/share/physio-bodychart/session_current.json"
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+        data["objective_pid"] = pid
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(path)
+    except Exception as e:
+        logger.warning(f"write_objective_pid: {e}")
+
+
+def read_objective_pid() -> int | None:
+    """Read the Objective TUI PID from session_current.json."""
+    path = Path.home() / ".local/share/physio-bodychart/session_current.json"
+    try:
+        data = json.loads(path.read_text())
+        pid = data.get("objective_pid")
+        return int(pid) if pid else None
+    except Exception:
+        return None
+
+
+def get_objective_sections_complete(session_file: str) -> dict[str, bool]:
+    """Read sections_complete from _objective.json."""
+    path = objective_path(session_file)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return data.get("sections_complete", {})
+    except Exception:
+        return {}
+
+
+def count_objective_complete_sections(session_file: str) -> int:
+    """Count how many objective sections are marked complete in _objective.json."""
+    sections = get_objective_sections_complete(session_file)
+    return sum(1 for v in sections.values() if v)
+
+
 def list_sessions() -> list[dict]:
     """
     List all assessment sessions from GTK storage directory.
@@ -145,6 +238,7 @@ def list_sessions() -> list[dict]:
                     data.get("objective", {}).get("points")
                 ),
                 "sections_complete": count_complete_sections(data),
+                "obj_sections_complete": count_objective_complete_sections(str(session_file)),
             }
             sessions.append(session)
         except (json.JSONDecodeError, KeyError) as e:
@@ -729,6 +823,543 @@ def _row(*pairs) -> str:
     return "  ".join(parts) if parts else ""
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Objective section report rendering
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _md_table(headers: list, rows: list) -> list:
+    """Return Markdown table as a list of strings. Returns [] when all value cols are blank."""
+    if not rows:
+        return []
+    n = len(headers)
+    rows = [[str(r[i]) if i < len(r) else "" for i in range(n)] for r in rows]
+    col_w = [len(str(headers[i])) for i in range(n)]
+    for r in rows:
+        for i, v in enumerate(r):
+            col_w[i] = max(col_w[i], len(v))
+    def _fmt(cells):
+        return "| " + " | ".join(str(v).ljust(col_w[i]) for i, v in enumerate(cells)) + " |"
+    sep = "| " + " | ".join("-" * w for w in col_w) + " |"
+    return [_fmt(headers), sep] + [_fmt(r) for r in rows]
+
+
+def _raw_table(headers: list, rows: list) -> list:
+    """Return fixed-width plain-text table lines."""
+    if not rows:
+        return []
+    n = len(headers)
+    rows = [[str(r[i]) if i < len(r) else "" for i in range(n)] for r in rows]
+    col_w = [len(str(headers[i])) for i in range(n)]
+    for r in rows:
+        for i, v in enumerate(r):
+            col_w[i] = max(col_w[i], len(v))
+    def _fmt(cells, sep=" | "):
+        return "  " + sep.join(str(v).ljust(col_w[i]) for i, v in enumerate(cells))
+    divider = "  " + "-+-".join("-" * w for w in col_w)
+    return [_fmt(headers), divider] + [_fmt(r) for r in rows]
+
+
+def _render_objective_md(obj: dict) -> list:
+    """Render all objective sections as a list of Markdown lines."""
+    lines: list = []
+
+    gen  = obj.get("general",      {}) or {}
+    act  = obj.get("active",       {}) or {}
+    pas  = obj.get("passive",      {}) or {}
+    neu  = obj.get("neurological", {}) or {}
+    sen  = obj.get("sensory",      {}) or {}
+    mus  = obj.get("muscle",       {}) or {}
+    func = obj.get("functional",   {}) or {}
+
+    if not any([gen, act, pas, neu, sen, mus, func]):
+        return []
+
+    lines.append("## 04 Objective Examination")
+    lines.append("")
+
+    # ── 01 General Observation ────────────────────────────────────────────────
+    if gen:
+        lines.append("### 01 General Observation")
+        parts = []
+        for key, lbl, unit in [("go_height","Height","cm"),("go_weight","Weight","kg"),
+                                ("go_bmi","BMI",""),("go_nrs","NRS rest","/10"),
+                                ("go_sit_tol","Sit tol","min")]:
+            v = gen.get(key, "")
+            if v:
+                parts.append(f"**{lbl}:** {v}{unit}")
+        if parts:
+            lines.append("  ".join(parts))
+        _posture_def = [("Lumbar lordosis","go_lx_lord"),("Thoracic kyphosis","go_tx_kyph"),
+                        ("Antalgic lean","go_lean"),("Sway posture","go_sway"),
+                        ("Breathing","go_breath"),("Scapular L","go_scap_l"),
+                        ("Scapular R","go_scap_r"),("Muscle wasting","go_wasting"),
+                        ("Undress/transfer","go_transfer")]
+        posture_rows = []
+        for lbl, key in _posture_def:
+            v = gen.get(key) or ""
+            if not v:
+                continue
+            cmt = gen.get(f"{key}_cmt", "").strip()
+            posture_rows.append([lbl, f"{v} — {cmt}" if cmt else v])
+        if posture_rows:
+            lines.append("**Posture:**")
+            lines.extend(_md_table(["", "Finding"], posture_rows))
+        _func_def = [("Gait","go_gait"),("SLS Left","go_sls_l"),
+                     ("SLS Right","go_sls_r"),("Sit-to-stand","go_sts")]
+        func_rows = []
+        for lbl, key in _func_def:
+            v = gen.get(key) or ""
+            if not v:
+                continue
+            cmt = gen.get(f"{key}_cmt", "").strip()
+            func_rows.append([lbl, f"{v} — {cmt}" if cmt else v])
+        if func_rows:
+            lines.append("**Functional Movement:**")
+            lines.extend(_md_table(["", "Finding"], func_rows))
+        for key, lbl in [("go_posture_notes","*Posture notes*"),
+                          ("go_functional_notes","*Functional notes*")]:
+            v = gen.get(key, "").strip()
+            if v:
+                lines.append(f"{lbl}: {v}")
+        lines.append("")
+
+    # ── 02 Active Movement ────────────────────────────────────────────────────
+    if act:
+        lines.append("### 02 Active Movement")
+        lx_rows_def = [("Flexion","lx_flex",True),("Extension","lx_ext",True),
+                       ("Lat Flex","lx_lf",False),("Rotation","lx_rot",False)]
+        tx_rows_def = [("Flexion","tx_flex",True),("Extension","tx_ext",True),
+                       ("Rotation","tx_rot",False)]
+        for title, rows_def in [("Lumbar ROM", lx_rows_def), ("Thoracic ROM", tx_rows_def)]:
+            tbl_rows = []
+            for label, prefix, bilateral in rows_def:
+                def _cell(p, s):
+                    v   = act.get(f"{p}_{s}_range", "") or ""
+                    ps  = act.get(f"{p}_{s}_ps") or ""
+                    txt = f"{v}°" if v else ""
+                    return f"{txt} {ps}".strip() if ps else txt
+                ax_l = _cell(prefix, "ax_l"); reax_l = _cell(prefix, "reax_l")
+                if bilateral:
+                    if ax_l or reax_l:
+                        tbl_rows.append([label, ax_l, "", reax_l, ""])
+                else:
+                    ax_r = _cell(prefix, "ax_r"); reax_r = _cell(prefix, "reax_r")
+                    if any([ax_l, ax_r, reax_l, reax_r]):
+                        tbl_rows.append([label, ax_l, ax_r, reax_l, reax_r])
+            if tbl_rows:
+                lines.append(f"**{title}:**")
+                lines.extend(_md_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows))
+        for key, lbl in [("am_lx_notes","*Lumbar notes*"),("am_tx_notes","*Thoracic notes*")]:
+            v = act.get(key, "").strip()
+            if v:
+                lines.append(f"{lbl}: {v}")
+        lines.append("")
+
+    # ── 03 Passive Movement ───────────────────────────────────────────────────
+    if pas:
+        lines.append("### 03 Passive Movement & Overpressure")
+        op_def = [("Tx Flexion","op_tx_flex"),("Tx Extension","op_tx_ext"),
+                  ("Tx Rot L","op_tx_rot_l"),("Tx Rot R","op_tx_rot_r"),
+                  ("Lx Flexion","op_lx_flex"),("Lx Extension","op_lx_ext"),
+                  ("Lx Lat Fl L","op_lx_lf_l"),("Lx Lat Fl R","op_lx_lf_r")]
+        op_rows = [[lbl, pas.get(f"{p}_ef") or "", pas.get(f"{p}_resp") or ""]
+                   for lbl, p in op_def
+                   if pas.get(f"{p}_ef") or pas.get(f"{p}_resp")]
+        if op_rows:
+            lines.append("**Overpressure:**")
+            lines.extend(_md_table(["Movement", "End-feel", "Response"], op_rows))
+        paivm_levels = ["L5","L4","L3","L2","L1","T12","T11","T10","T9","T8"]
+        paivm_rows = [[lv, pas.get(f"pm_{lv}_c") or "",
+                          pas.get(f"pm_{lv}_ul_l") or "",
+                          pas.get(f"pm_{lv}_ul_r") or ""]
+                      for lv in paivm_levels
+                      if any(pas.get(f"pm_{lv}_{d}") for d in ("c","ul_l","ul_r"))]
+        if paivm_rows:
+            lines.append("**PAIVMs:**")
+            lines.extend(_md_table(["Level", "Central", "UL Left", "UL Right"], paivm_rows))
+        for key, lbl in [("pm_op_notes","*OP notes*"),("pm_paivm_notes","*PAIVM notes*")]:
+            v = pas.get(key, "").strip()
+            if v:
+                lines.append(f"{lbl}: {v}")
+        lines.append("")
+
+    # ── 04 Neurological ───────────────────────────────────────────────────────
+    if neu:
+        lines.append("### 04 Neurological")
+        neuro_def = [
+            ("Knee jerk L3/4","nr_knee"),("Ankle jerk S1","nr_ankle"),("Plantar","nr_plantar"),
+            ("L2 Hip flex","nr_l2"),("L3 Knee ext","nr_l3"),("L4 Ankle DF","nr_l4"),
+            ("L5 GT ext/EHL","nr_l5"),("S1 PF/evert","nr_s1"),("S2 Ham/KF","nr_s2"),
+        ]
+        neuro_rows = [[lbl, neu.get(f"{p}_l") or "", neu.get(f"{p}_r") or ""]
+                      for lbl, p in neuro_def
+                      if neu.get(f"{p}_l") or neu.get(f"{p}_r")]
+        if neuro_rows:
+            lines.extend(_md_table(["Test", "Left", "Right"], neuro_rows))
+        _derm_def_nr = [("L2 Ant thigh","sn_l2"),("L3 Med knee","sn_l3"),
+                        ("L4 Med leg","sn_l4"),("L5 Lat leg/GT","sn_l5"),
+                        ("S1 Lat foot","sn_s1"),("S2 Post thigh","sn_s2")]
+        derm_rows_nr = [[lbl, neu.get(f"{p}_l") or "", neu.get(f"{p}_r") or ""]
+                        for lbl, p in _derm_def_nr
+                        if neu.get(f"{p}_l") or neu.get(f"{p}_r")]
+        if derm_rows_nr:
+            lines.append("**Dermatomes:**")
+            lines.extend(_md_table(["Level", "Left", "Right"], derm_rows_nr))
+        nd_def = [("SLR","nr_slr"),("Slump","nr_slump"),("PKF","nr_pkf")]
+        nd_rows = []
+        for lbl, p in nd_def:
+            ld = neu.get(f"{p}_l_deg","") or ""; lr = neu.get(f"{p}_l_resp","") or ""
+            rd = neu.get(f"{p}_r_deg","") or ""; rr = neu.get(f"{p}_r_resp","") or ""
+            if any([ld, lr, rd, rr]):
+                nd_rows.append([lbl, f"{ld}°" if ld else "", lr,
+                                     f"{rd}°" if rd else "", rr])
+        if nd_rows:
+            lines.append("**Neurodynamics:**")
+            lines.extend(_md_table(["Test", "L °", "L Resp", "R °", "R Resp"], nd_rows))
+        umn_items = [("Hyperreflexia","nr_umn_hyper"),("Babinski +","nr_umn_bab"),
+                     ("Clonus","nr_umn_clonus"),("Romberg +","nr_umn_romberg"),
+                     ("Coord impaired","nr_umn_coord")]
+        umn_pos = [lbl for lbl, uid in umn_items if neu.get(uid) is True]
+        umn_neg = [lbl for lbl, uid in umn_items if neu.get(uid) is False]
+        if umn_pos: lines.append(f"**UMN signs +ve:** {', '.join(umn_pos)}")
+        if umn_neg: lines.append(f"**UMN signs -ve:** {', '.join(umn_neg)}")
+        v = neu.get("nr_notes", "").strip()
+        if v: lines.append(f"*Notes:* {v}")
+        lines.append("")
+
+    # ── 05 Sensory ────────────────────────────────────────────────────────────
+    if sen:
+        lines.append("### 05 Sensory")
+        ppt = sen.get("sn_ppt")
+        ppt_detail = sen.get("sn_ppt_detail", "").strip()
+        if ppt:
+            ppt_str = f"**PPT (algometer):** {ppt}"
+            if ppt_detail:
+                ppt_str += f" — {ppt_detail}"
+            lines.append(ppt_str)
+        hypo_items = [("Sharp/blunt","sn_sharp_blunt",True),("Two-point discrim","sn_tpd",True),
+                      ("Light touch","sn_lt",True),("Body perception","sn_body",False)]
+        hyper_items = [("Static allodynia","sn_static_allodynia",True),
+                       ("Dynamic allodynia","sn_dynamic_allodynia",True),
+                       ("2° hyperalgesia PPT","sn_secondary_hyper",True),
+                       ("Pin prick hyper","sn_pin_prick",True),
+                       ("Cold hyperalgesia","sn_cold",False),
+                       ("Heat hyperalgesia","sn_heat",False),
+                       ("Temporal summation","sn_temporal_sum",True)]
+        for sec_lbl, items in [("Hyposensitivity", hypo_items),
+                                ("Hypersensitivity", hyper_items)]:
+            found = []
+            for lbl, sid, has_detail in items:
+                v = sen.get(sid)
+                if v is True:
+                    detail = sen.get(f"{sid}_detail", "").strip() if has_detail else ""
+                    found.append(lbl + (f": {detail}" if detail else ""))
+                elif v is False:
+                    found.append(f"~~{lbl}~~")
+            if found:
+                lines.append(f"**{sec_lbl}:** {'; '.join(found)}")
+        v = sen.get("sn_notes", "").strip()
+        if v: lines.append(f"*Notes:* {v}")
+        lines.append("")
+
+    # ── 06 Muscle Testing ─────────────────────────────────────────────────────
+    if mus:
+        lines.append("### 06 Muscle Testing")
+        ml_def = [("QL (side sit)","ml_ql"),("Thomas test","ml_thomas"),
+                  ("Hamstrings SLR","ml_ham")]
+        ml_rows = [[lbl, mus.get(f"{p}_l") or "", mus.get(f"{p}_r") or ""]
+                   for lbl, p in ml_def
+                   if mus.get(f"{p}_l") or mus.get(f"{p}_r")]
+        if ml_rows:
+            lines.append("**Muscle Length:**")
+            lines.extend(_md_table(["Test", "Left", "Right"], ml_rows))
+        ma_def = [("Tx erector spinae","ma_tx_es"),("Transversus abd","ma_tva"),
+                  ("Lumbar multifidus","ma_lmf")]
+        ma_rows = [[lbl, mus.get(mid) or ""] for lbl, mid in ma_def if mus.get(mid)]
+        if ma_rows:
+            lines.append("**Muscle Activation:**")
+            lines.extend(_md_table(["Test", "Finding"], ma_rows))
+        trunk = []
+        if mus.get("st_flex"): trunk.append(f"**Flexion:** {mus['st_flex']} reps/min")
+        if mus.get("st_ext"):  trunk.append(f"**Extension:** {mus['st_ext']} raises/min")
+        if trunk: lines.append("**Trunk Strength:** " + "  ".join(trunk))
+        hip_def = [("Hip flexion","sh_hip_flex"),("Hip extension","sh_hip_ext"),
+                   ("Hip abduction","sh_hip_abd"),("Hip adduction","sh_hip_add"),
+                   ("Hip int rotation","sh_hip_ir"),("Hip ext rotation","sh_hip_er")]
+        hip_rows = [[lbl, mus.get(f"{p}_l") or "", mus.get(f"{p}_r") or ""]
+                    for lbl, p in hip_def
+                    if mus.get(f"{p}_l") or mus.get(f"{p}_r")]
+        if hip_rows:
+            lines.append("**Hip Strength (Wagner FPX kg):**")
+            lines.extend(_md_table(["Movement", "Left kg", "Right kg"], hip_rows))
+        sij_items = [("Sacral thrust","sij_sacral"),("Post thigh thrust","sij_ptt"),
+                     ("Distraction supine","sij_dist"),("Compression s/l","sij_comp"),
+                     ("Gaenslen","sij_gaenslen"),("ASLR compression","sij_aslr")]
+        sij_pos = [lbl for lbl, sid in sij_items if mus.get(sid) is True]
+        sij_neg = [lbl for lbl, sid in sij_items if mus.get(sid) is False]
+        if sij_pos: lines.append(f"**SIJ Provocation +ve:** {', '.join(sij_pos)}")
+        if sij_neg: lines.append(f"**SIJ Provocation -ve:** {', '.join(sij_neg)}")
+        v = mus.get("mu_notes", "").strip()
+        if v: lines.append(f"*Notes:* {v}")
+        lines.append("")
+
+    # ── 07 Functional ─────────────────────────────────────────────────────────
+    if func:
+        lines.append("### 07 Functional")
+        obs_def = [("Gait","ft_gait"),("Prone hip rot","ft_phr"),
+                   ("Sit-to-stand","ft_sts_q"),("SLS Left","ft_sls_l"),
+                   ("SLS Right","ft_sls_r")]
+        obs_rows = [[lbl, func.get(fid) or ""] for lbl, fid in obs_def if func.get(fid)]
+        if obs_rows:
+            lines.append("**Movement Observation:**")
+            lines.extend(_md_table(["Test", "Finding"], obs_rows))
+        bal_def = [("Both legs",["ft_bal_both"],"s"),("Feet together",["ft_bal_feet"],"s"),
+                   ("Tandem",["ft_bal_tandem"],"s"),
+                   ("SLS eyes open",["ft_sls_eo_l","ft_sls_eo_r"],"s"),
+                   ("SLS eyes closed",["ft_sls_ec_l","ft_sls_ec_r"],"s"),
+                   ("SLS foam 10cm",["ft_sls_foam_l","ft_sls_foam_r"],"s")]
+        bal_rows = []
+        for lbl, ids, _ in bal_def:
+            vals = [func.get(i,"") or "" for i in ids]
+            if len(ids) == 1:
+                vals = [vals[0], ""]
+            if any(vals):
+                bal_rows.append([lbl] + vals)
+        if bal_rows:
+            lines.append("**Balance (Steffen 2002):**")
+            lines.extend(_md_table(["Test", "Left s", "Right s"], bal_rows))
+        cap_def = [("TUG (3m)","ft_tug","s"),("5× Sit-to-Stand","ft_sts5","s"),
+                   ("10m comfortable","ft_10m_e","m/s"),("10m fast","ft_10m_f","m/s"),
+                   ("2 min walk","ft_2mw","m")]
+        cap_rows = [[lbl, f"{func.get(fid,'')} {unit}".strip()]
+                    for lbl, fid, unit in cap_def if func.get(fid,"")]
+        if cap_rows:
+            lines.append("**Timed Capability:**")
+            lines.extend(_md_table(["Test", "Result"], cap_rows))
+        v = func.get("ft_notes", "").strip()
+        if v: lines.append(f"*Notes:* {v}")
+        lines.append("")
+
+    return lines
+
+
+def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
+    """Append objective sections in plain-text format to lines list."""
+
+    gen  = obj.get("general",      {}) or {}
+    act  = obj.get("active",       {}) or {}
+    pas  = obj.get("passive",      {}) or {}
+    neu  = obj.get("neurological", {}) or {}
+    sen  = obj.get("sensory",      {}) or {}
+    mus  = obj.get("muscle",       {}) or {}
+    func = obj.get("functional",   {}) or {}
+
+    if not any([gen, act, pas, neu, sen, mus, func]):
+        return
+
+    lines.append("")
+    lines.append(SEP)
+    lines.append("SECTION 8: OBJECTIVE EXAMINATION")
+    lines.append(SEP)
+
+    # ── 01 General ────────────────────────────────────────────────────────────
+    if gen:
+        lines.append("  — 01 General Observation —")
+        for key, lbl, unit in [("go_height","Height","cm"),("go_weight","Weight","kg"),
+                                ("go_bmi","BMI",""),("go_nrs","NRS rest","/10"),
+                                ("go_sit_tol","Sit tol","min")]:
+            v = gen.get(key, "")
+            lines.append(f"  {lbl}: {v}{unit}" if v else f"  {lbl}: (not recorded)")
+        _posture_raw = [("Lumbar lordosis","go_lx_lord"),("Thoracic kyphosis","go_tx_kyph"),
+                        ("Antalgic lean","go_lean"),("Sway posture","go_sway"),
+                        ("Breathing","go_breath"),("Scapular L","go_scap_l"),
+                        ("Scapular R","go_scap_r"),("Muscle wasting","go_wasting"),
+                        ("Undress/transfer","go_transfer")]
+        p_rows = [[lbl, gen.get(key) or "(not recorded)", gen.get(f"{key}_cmt", "")]
+                  for lbl, key in _posture_raw]
+        lines.extend(_raw_table(["Posture", "Finding", "Comment"], p_rows))
+        _func_raw = [("Gait","go_gait"),("SLS Left","go_sls_l"),
+                     ("SLS Right","go_sls_r"),("Sit-to-stand","go_sts")]
+        f_rows = [[lbl, gen.get(key) or "(not recorded)", gen.get(f"{key}_cmt", "")]
+                  for lbl, key in _func_raw]
+        lines.extend(_raw_table(["Function", "Finding", "Comment"], f_rows))
+        for key, lbl in [("go_posture_notes","Posture notes"),
+                          ("go_functional_notes","Functional notes")]:
+            v = gen.get(key, "").strip()
+            lines.append(f"  {lbl}: {v}" if v else f"  {lbl}: (empty)")
+
+    # ── 02 Active Movement ────────────────────────────────────────────────────
+    if act:
+        lines.append("")
+        lines.append("  — 02 Active Movement —")
+        lx_rows_def = [("Flexion","lx_flex",True),("Extension","lx_ext",True),
+                       ("Lat Flex","lx_lf",False),("Rotation","lx_rot",False)]
+        tx_rows_def = [("Flexion","tx_flex",True),("Extension","tx_ext",True),
+                       ("Rotation","tx_rot",False)]
+        for title, rows_def in [("Lumbar ROM", lx_rows_def), ("Thoracic ROM", tx_rows_def)]:
+            tbl_rows = []
+            for lbl, prefix, bilateral in rows_def:
+                def _cell(p, s):
+                    v  = act.get(f"{p}_{s}_range", "") or ""
+                    ps = act.get(f"{p}_{s}_ps") or ""
+                    t  = f"{v}°" if v else "-"
+                    return f"{t} {ps}".strip() if ps else t
+                ax_l = _cell(prefix,"ax_l"); reax_l = _cell(prefix,"reax_l")
+                if bilateral:
+                    tbl_rows.append([lbl, ax_l, "-", reax_l, "-"])
+                else:
+                    ax_r = _cell(prefix,"ax_r"); reax_r = _cell(prefix,"reax_r")
+                    tbl_rows.append([lbl, ax_l, ax_r, reax_l, reax_r])
+            lines.append(f"  {title}:")
+            lines.extend(_raw_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows))
+        for key, lbl in [("am_lx_notes","Lumbar notes"),("am_tx_notes","Thoracic notes")]:
+            v = act.get(key, "").strip()
+            lines.append(f"  {lbl}: {v}" if v else f"  {lbl}: (empty)")
+
+    # ── 03 Passive Movement ───────────────────────────────────────────────────
+    if pas:
+        lines.append("")
+        lines.append("  — 03 Passive Movement & Overpressure —")
+        op_def = [("Tx Flexion","op_tx_flex"),("Tx Extension","op_tx_ext"),
+                  ("Tx Rot L","op_tx_rot_l"),("Tx Rot R","op_tx_rot_r"),
+                  ("Lx Flexion","op_lx_flex"),("Lx Extension","op_lx_ext"),
+                  ("Lx Lat Fl L","op_lx_lf_l"),("Lx Lat Fl R","op_lx_lf_r")]
+        op_rows = [[lbl, pas.get(f"{p}_ef") or "-", pas.get(f"{p}_resp") or "-"]
+                   for lbl, p in op_def]
+        lines.extend(_raw_table(["Overpressure", "End-feel", "Response"], op_rows))
+        paivm_levels = ["L5","L4","L3","L2","L1","T12","T11","T10","T9","T8"]
+        paivm_rows = [[lv, pas.get(f"pm_{lv}_c") or "-",
+                          pas.get(f"pm_{lv}_ul_l") or "-",
+                          pas.get(f"pm_{lv}_ul_r") or "-"]
+                      for lv in paivm_levels]
+        lines.extend(_raw_table(["PAIVM", "Central", "UL Left", "UL Right"], paivm_rows))
+        for key, lbl in [("pm_op_notes","OP notes"),("pm_paivm_notes","PAIVM notes")]:
+            v = pas.get(key, "").strip()
+            lines.append(f"  {lbl}: {v}" if v else f"  {lbl}: (empty)")
+
+    # ── 04 Neurological ───────────────────────────────────────────────────────
+    if neu:
+        lines.append("")
+        lines.append("  — 04 Neurological —")
+        neuro_def = [("Knee jerk L3/4","nr_knee"),("Ankle jerk S1","nr_ankle"),
+                     ("Plantar","nr_plantar"),
+                     ("L2 Hip flex","nr_l2"),("L3 Knee ext","nr_l3"),
+                     ("L4 Ankle DF","nr_l4"),("L5 GT ext/EHL","nr_l5"),
+                     ("S1 PF/evert","nr_s1"),("S2 Ham/KF","nr_s2")]
+        neuro_rows = [[lbl, neu.get(f"{p}_l") or "-", neu.get(f"{p}_r") or "-"]
+                      for lbl, p in neuro_def]
+        lines.extend(_raw_table(["Test", "Left", "Right"], neuro_rows))
+        _derm_raw = [("L2 Ant thigh","sn_l2"),("L3 Med knee","sn_l3"),
+                     ("L4 Med leg","sn_l4"),("L5 Lat leg/GT","sn_l5"),
+                     ("S1 Lat foot","sn_s1"),("S2 Post thigh","sn_s2")]
+        derm_raw_rows = [[lbl, neu.get(f"{p}_l") or "-", neu.get(f"{p}_r") or "-"]
+                         for lbl, p in _derm_raw]
+        lines.extend(_raw_table(["Dermatome", "Left", "Right"], derm_raw_rows))
+        nd_def = [("SLR","nr_slr"),("Slump","nr_slump"),("PKF","nr_pkf")]
+        nd_rows = []
+        for lbl, p in nd_def:
+            ld = neu.get(f"{p}_l_deg","") or ""; lr = neu.get(f"{p}_l_resp","") or "-"
+            rd = neu.get(f"{p}_r_deg","") or ""; rr = neu.get(f"{p}_r_resp","") or "-"
+            nd_rows.append([lbl, f"{ld}°" if ld else "-", lr,
+                                  f"{rd}°" if rd else "-", rr])
+        lines.extend(_raw_table(["Neurodynamics","L°","L Resp","R°","R Resp"], nd_rows))
+        umn_items = [("Hyperreflexia","nr_umn_hyper"),("Babinski +","nr_umn_bab"),
+                     ("Clonus","nr_umn_clonus"),("Romberg +","nr_umn_romberg"),
+                     ("Coord impaired","nr_umn_coord")]
+        for lbl, uid in umn_items:
+            v = neu.get(uid)
+            lines.append(f"  {lbl}: {'✓ Yes' if v is True else '✗ No' if v is False else '(not answered)'}")
+        v = neu.get("nr_notes", "").strip()
+        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+
+    # ── 05 Sensory ────────────────────────────────────────────────────────────
+    if sen:
+        lines.append("")
+        lines.append("  — 05 Sensory —")
+        ppt_raw = sen.get("sn_ppt") or "(not recorded)"
+        ppt_detail_raw = sen.get("sn_ppt_detail", "").strip()
+        lines.append(f"  PPT (algometer): {ppt_raw}" + (f" — {ppt_detail_raw}" if ppt_detail_raw else ""))
+        hypo_items = [("Sharp/blunt","sn_sharp_blunt",True),
+                      ("Two-point discrim","sn_tpd",True),
+                      ("Light touch","sn_lt",True),
+                      ("Body perception","sn_body",False)]
+        hyper_items = [("Static allodynia","sn_static_allodynia",True),
+                       ("Dynamic allodynia","sn_dynamic_allodynia",True),
+                       ("2° hyperalgesia PPT","sn_secondary_hyper",True),
+                       ("Pin prick hyper","sn_pin_prick",True),
+                       ("Cold hyperalgesia","sn_cold",False),
+                       ("Heat hyperalgesia","sn_heat",False),
+                       ("Temporal summation","sn_temporal_sum",True)]
+        for items in (hypo_items, hyper_items):
+            for lbl, sid, has_detail in items:
+                v = sen.get(sid)
+                detail = sen.get(f"{sid}_detail", "").strip() if has_detail else ""
+                state = "✓ Yes" if v is True else "✗ No" if v is False else "(not answered)"
+                lines.append(f"  {lbl}: {state}" + (f" — {detail}" if detail and v is True else ""))
+        v = sen.get("sn_notes", "").strip()
+        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+
+    # ── 06 Muscle Testing ─────────────────────────────────────────────────────
+    if mus:
+        lines.append("")
+        lines.append("  — 06 Muscle Testing —")
+        ml_def = [("QL (side sit)","ml_ql"),("Thomas test","ml_thomas"),
+                  ("Hamstrings SLR","ml_ham")]
+        ml_rows = [[lbl, mus.get(f"{p}_l") or "-", mus.get(f"{p}_r") or "-"]
+                   for lbl, p in ml_def]
+        lines.extend(_raw_table(["Muscle Length", "Left", "Right"], ml_rows))
+        ma_def = [("Tx erector spinae","ma_tx_es"),("Transversus abd","ma_tva"),
+                  ("Lumbar multifidus","ma_lmf")]
+        ma_rows = [[lbl, mus.get(mid) or "-"] for lbl, mid in ma_def]
+        lines.extend(_raw_table(["Activation", "Finding"], ma_rows))
+        lines.append(f"  Trunk flexion: {mus.get('st_flex','') or '(not recorded)'} reps/min")
+        lines.append(f"  Trunk extension: {mus.get('st_ext','') or '(not recorded)'} raises/min")
+        hip_def = [("Hip flexion","sh_hip_flex"),("Hip extension","sh_hip_ext"),
+                   ("Hip abduction","sh_hip_abd"),("Hip adduction","sh_hip_add"),
+                   ("Hip int rotation","sh_hip_ir"),("Hip ext rotation","sh_hip_er")]
+        hip_rows = [[lbl, mus.get(f"{p}_l") or "-", mus.get(f"{p}_r") or "-"]
+                    for lbl, p in hip_def]
+        lines.extend(_raw_table(["Hip Strength (kg)", "Left", "Right"], hip_rows))
+        sij_items = [("Sacral thrust","sij_sacral"),("Post thigh thrust","sij_ptt"),
+                     ("Distraction supine","sij_dist"),("Compression s/l","sij_comp"),
+                     ("Gaenslen","sij_gaenslen"),("ASLR compression","sij_aslr")]
+        for lbl, sid in sij_items:
+            v = mus.get(sid)
+            lines.append(f"  SIJ {lbl}: {'✓ Yes' if v is True else '✗ No' if v is False else '(not answered)'}")
+        v = mus.get("mu_notes", "").strip()
+        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+
+    # ── 07 Functional ─────────────────────────────────────────────────────────
+    if func:
+        lines.append("")
+        lines.append("  — 07 Functional —")
+        obs_def = [("Gait","ft_gait"),("Prone hip rot","ft_phr"),
+                   ("Sit-to-stand","ft_sts_q"),("SLS Left","ft_sls_l"),
+                   ("SLS Right","ft_sls_r")]
+        obs_rows = [[lbl, func.get(fid) or "-"] for lbl, fid in obs_def]
+        lines.extend(_raw_table(["Movement Obs", "Finding"], obs_rows))
+        bal_def = [("Both legs",["ft_bal_both"],"s"),("Feet together",["ft_bal_feet"],"s"),
+                   ("Tandem",["ft_bal_tandem"],"s"),
+                   ("SLS eyes open",["ft_sls_eo_l","ft_sls_eo_r"],"s"),
+                   ("SLS eyes closed",["ft_sls_ec_l","ft_sls_ec_r"],"s"),
+                   ("SLS foam 10cm",["ft_sls_foam_l","ft_sls_foam_r"],"s")]
+        bal_rows = []
+        for lbl, ids, _ in bal_def:
+            vals = [func.get(i,"") or "-" for i in ids]
+            if len(ids) == 1:
+                vals = [vals[0], "-"]
+            bal_rows.append([lbl] + vals)
+        lines.extend(_raw_table(["Balance (Steffen)", "Left s", "Right s"], bal_rows))
+        cap_def = [("TUG (3m)","ft_tug","s"),("5× STS","ft_sts5","s"),
+                   ("10m comfortable","ft_10m_e","m/s"),("10m fast","ft_10m_f","m/s"),
+                   ("2 min walk","ft_2mw","m")]
+        cap_rows = [[lbl, f"{func.get(fid,'') or '-'} {unit}".strip()]
+                    for lbl, fid, unit in cap_def]
+        lines.extend(_raw_table(["Timed Capability", "Result"], cap_rows))
+        v = func.get("ft_notes", "").strip()
+        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+
+
 def export_session_report(session_file: str) -> str:
     """
     Write a compact Markdown assessment report to <session_dir>/<name>_report.md.
@@ -749,6 +1380,10 @@ def export_session_report(session_file: str) -> str:
             data.setdefault("sections_complete", assess_data.get("sections_complete", {}))
         except Exception:
             pass
+
+    # Load objective sections from _objective.json
+    obj_file_data = load_objective(session_file)
+    obj_assessment = obj_file_data.get("assessment", {})
 
     session_dir  = Path(session_file).parent
     session_name = data.get("session_name", "session")
@@ -976,6 +1611,11 @@ def export_session_report(session_file: str) -> str:
         text("Next session focus", br.get("fu_next_focus"))
         text("Monitoring", br.get("fu_monitoring"))
         gap()
+
+    # ── 04 Objective Examination ───────────────────────────────────────────
+    obj_lines = _render_objective_md(obj_assessment)
+    if obj_lines:
+        lines.extend(obj_lines)
 
     # ── Write ──────────────────────────────────────────────────────────────
     try:
@@ -2181,6 +2821,12 @@ def export_raw_report(session_data: dict) -> str:  # noqa: C901
         lines.append("  (empty)")
 
     # ════════════════════════════════════════════════════════════════════════
+    # OBJECTIVE EXAMINATION
+    # ════════════════════════════════════════════════════════════════════════
+    obj_assessment = session_data.get("objective_assessment", {}) or {}
+    _render_objective_raw(obj_assessment, lines, SEP, SEP2)
+
+    # ════════════════════════════════════════════════════════════════════════
     # BODY CHART SUMMARY
     # ════════════════════════════════════════════════════════════════════════
     subj_chart = session_data.get("subjective", {}) or {}
@@ -2241,6 +2887,10 @@ def save_raw_report(session_file: str) -> str:
             data.setdefault("sections_complete", assess_data.get("sections_complete", {}))
         except Exception:
             pass
+
+    # Load objective sections from _objective.json
+    obj_file_data = load_objective(session_file)
+    data["objective_assessment"] = obj_file_data.get("assessment", {})
 
     content = export_raw_report(data)
     session_name = data.get("session_name", "session")

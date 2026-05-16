@@ -14,19 +14,22 @@ from typing import Callable, Awaitable
 
 SESSION_CURRENT = Path.home() / ".local/share/physio-bodychart/session_current.json"
 POLL_INTERVAL   = 1.0    # seconds
-FOCUS_SIGNAL    = ".focus_tui"  # GTK writes this to request TUI window focus
 
 
 class BodyChartWatcher:
     """
     Watches session_current.json for active-session changes,
     watches the active session_file for GTK content updates,
-    and polls for a .focus_tui signal file written by GTK.
+    and polls for a focus signal file written by GTK or another TUI app.
 
     Callbacks:
       on_session_switch(session_data)  — called when GTK opens a different session
       on_chart_update(session_data)    — called when GTK updates the body chart
-      on_focus_request()               — called when GTK writes .focus_tui
+      on_focus_request()               — called when the focus signal file appears
+
+    focus_signal: filename to watch for in the session directory.
+      ".focus_tui"       — for the Subjective TUI (default)
+      ".focus_objective" — for the Objective TUI
     """
 
     def __init__(
@@ -34,10 +37,12 @@ class BodyChartWatcher:
         on_session_switch: Callable[[dict], Awaitable[None]],
         on_chart_update: Callable[[dict], Awaitable[None]],
         on_focus_request: Callable[[], Awaitable[None]] | None = None,
+        focus_signal: str = ".focus_tui",
     ):
         self.on_session_switch = on_session_switch
         self.on_chart_update   = on_chart_update
         self.on_focus_request  = on_focus_request
+        self._focus_signal     = focus_signal
         self._current_session_file: Path | None = None
         self._task: asyncio.Task | None = None
         self._last_mtime: dict[Path, float] = {}
@@ -86,10 +91,10 @@ class BodyChartWatcher:
             self.logger.error(f"Failed to parse JSON from {path}: {e}")
 
     async def _check_focus_signal(self):
-        """Check for .focus_tui signal file; consume and fire callback if present."""
+        """Check for focus signal file; consume and fire callback if present."""
         if not self._current_session_file or not self.on_focus_request:
             return
-        signal = self._current_session_file.parent / FOCUS_SIGNAL
+        signal = self._current_session_file.parent / self._focus_signal
         if signal.exists():
             try:
                 signal.unlink()

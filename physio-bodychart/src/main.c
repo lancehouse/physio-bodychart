@@ -37,16 +37,18 @@ int main(int argc, char *argv[])
     svg_views_init();
     overlay_svg_init();
 
-    /* Parse --session argument before other argument processing */
-    for (int i = 1; i < argc - 1; i++) {
-        if (strcmp(argv[i], "--session") == 0) {
+    /* Parse --session, --kitty/-k before GTK sees argv */
+    for (int i = 1; i < argc; ) {
+        if (strcmp(argv[i], "--session") == 0 && i + 1 < argc) {
             strncpy(g_session_path, argv[i + 1], sizeof(g_session_path) - 1);
-            /* Shift remaining args to remove --session and its value */
-            for (int j = i; j < argc - 2; j++) {
-                argv[j] = argv[j + 2];
-            }
+            for (int j = i; j < argc - 2; j++) argv[j] = argv[j + 2];
             argc -= 2;
-            break;  /* Only one --session argument expected */
+        } else if (strcmp(argv[i], "--kitty") == 0 || strcmp(argv[i], "-k") == 0) {
+            g_setenv("PHYSIO_TERMINAL", "kitty", TRUE);
+            for (int j = i; j < argc - 1; j++) argv[j] = argv[j + 1];
+            argc -= 1;
+        } else {
+            i++;
         }
     }
 

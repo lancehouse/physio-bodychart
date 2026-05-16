@@ -82,6 +82,7 @@ class SessionListRow(Static):
         self.session_label = session["session_label"]
         self.session_path = session["path"]
         self.sections_complete = session["sections_complete"]
+        self.obj_sections_complete = session.get("obj_sections_complete", 0)
         self.body_chart_data = session["body_chart_data"]
         self.date = session["date"]
 
@@ -99,7 +100,7 @@ class SessionListRow(Static):
             date_str = datetime.fromtimestamp(self.date).strftime("%d %b %H:%M")
 
         body_chart_indicator = "●" if self.body_chart_data else "○"
-        top_line = f"{self.patient_id}   {date_str}   {body_chart_indicator}   {self.sections_complete}/7"
+        top_line = f"{self.patient_id}   {date_str}   {body_chart_indicator}   S {self.sections_complete}/7  O {self.obj_sections_complete}/7"
         lines = [top_line]
         if self.session_label:
             lines.append(f"  {self.session_label}")

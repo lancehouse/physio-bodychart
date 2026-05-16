@@ -19,6 +19,14 @@ from .sections.diagnosis import DiagnosisSection
 from .sections.barriers import BarriersSection
 from .sections.placeholder import PlaceholderSection
 from .sections.scratchpad import ScratchpadSection
+from .objective.sections.general import GeneralSection
+from .objective.sections.active_movement import ActiveMovementSection
+from .objective.sections.passive_movement import PassiveMovementSection
+from .objective.sections.neurological import NeurologicalSection
+from .objective.sections.sensory import SensorySection
+from .objective.sections.muscle import MuscleSection
+from .objective.sections.functional import FunctionalSection
+from .objective.objective_view import ObjectiveSidebar
 from .storage import (
     load_consent,
     load_subjective,
@@ -31,6 +39,8 @@ from .storage import (
     save_all_sections,
     save_raw_report,
     assessment_path,
+    save_objective,
+    load_objective,
 )
 
 
@@ -74,10 +84,11 @@ class SectionNav(Static):
         "01_consent": "01 Consent",
         "02_subjective": "02 Subjective",
         "03_medical": "03 Medical",
-        "04_pain_classification": "04 Classification",
-        "05_outcome_measures": "05 Outcomes",
-        "06_diagnosis": "06 Diagnosis",
-        "07_barriers": "07 Barriers",
+        "04_objective": "04 Objective →",
+        "04_pain_classification": "05 Classification",
+        "05_outcome_measures": "06 Outcomes",
+        "06_diagnosis": "07 Diagnosis",
+        "07_barriers": "08 Barriers",
         "scratchpad": "📝 Notes",
     }
 
@@ -93,6 +104,7 @@ class SectionNav(Static):
             "01_consent",
             "02_subjective",
             "03_medical",
+            "04_objective",
             "04_pain_classification",
             "05_outcome_measures",
             "06_diagnosis",
@@ -170,6 +182,11 @@ class AssessmentView(Container):
     }
     """
 
+    _OBJECTIVE_IDS = frozenset([
+        "01_general", "02_active", "03_passive", "04_neurological",
+        "05_sensory", "06_muscle", "07_functional",
+    ])
+
     def __init__(self, session_file: str = "", **kwargs):
         super().__init__(**kwargs)
         self.session_file = session_file
@@ -178,37 +195,51 @@ class AssessmentView(Container):
         self._save_task: asyncio.Task | None = None
         self._mounted = False
         self._pending_load: dict | None = None
+        self._in_objective_mode = False
+        self._last_assessment_section_id = "01_consent"
+        self._last_objective_section_id = "01_general"
 
     def compose(self) -> ComposeResult:
         """Create sidebar nav + content area."""
-        # Navigation sidebar
         yield SectionNav(on_section_selected=self._show_section, id="section_nav")
-
-        # Content area (sections will be mounted in on_mount)
+        yield ObjectiveSidebar(
+            on_section_selected=self._show_section,
+            on_back=self._exit_objective_mode,
+            id="obj_sidebar",
+        )
         yield ScrollableContainer(Vertical(id="section_content_inner"), id="section_content")
 
     def on_mount(self) -> None:
         """Initialize after mounting."""
-        # Create all section instances
         self.sections = {
-            "01_consent": ConsentSection(id="section_01_consent"),
-            "02_subjective": SubjectiveSection(id="section_02_subjective"),
-            "03_medical": MedicalSection(id="section_03_medical"),
+            # Assessment sections
+            "01_consent":             ConsentSection(id="section_01_consent"),
+            "02_subjective":          SubjectiveSection(id="section_02_subjective"),
+            "03_medical":             MedicalSection(id="section_03_medical"),
             "04_pain_classification": PainClassificationSection(id="section_04_pain_classification"),
-            "05_outcome_measures": OutcomeMeasuresSection(id="section_05_outcome_measures"),
-            "06_diagnosis": DiagnosisSection(id="section_06_diagnosis"),
-            "07_barriers": BarriersSection(id="section_07_barriers"),
-            "scratchpad": ScratchpadSection(id="section_scratchpad"),
+            "05_outcome_measures":    OutcomeMeasuresSection(id="section_05_outcome_measures"),
+            "06_diagnosis":           DiagnosisSection(id="section_06_diagnosis"),
+            "07_barriers":            BarriersSection(id="section_07_barriers"),
+            "scratchpad":             ScratchpadSection(id="section_scratchpad"),
+            # Objective sections (hidden until objective mode is entered)
+            "01_general":      GeneralSection(id="section_01_general"),
+            "02_active":       ActiveMovementSection(id="section_02_active"),
+            "03_passive":      PassiveMovementSection(id="section_03_passive"),
+            "04_neurological": NeurologicalSection(id="section_04_neurological"),
+            "05_sensory":      SensorySection(id="section_05_sensory"),
+            "06_muscle":       MuscleSection(id="section_06_muscle"),
+            "07_functional":   FunctionalSection(id="section_07_functional"),
         }
 
-        # Mount all sections to content area
         content = self.query_one("#section_content_inner", Vertical)
         for section_id, section in self.sections.items():
             if section_id != self.active_section_id:
                 section.display = False
             content.mount(section)
 
-        # Mark as mounted and process any pending load
+        # Objective sidebar hidden until objective mode is entered
+        self.query_one("#obj_sidebar", ObjectiveSidebar).display = False
+
         self._mounted = True
         if self._pending_load:
             data = self._pending_load
@@ -303,54 +334,100 @@ class AssessmentView(Container):
             if isinstance(sp_data, dict):
                 sp_section.load(sp_data)
 
+        # Load objective sections from _objective.json
+        obj_file_data = load_objective(session_file)
+        obj_assessment = obj_file_data.get("assessment", {})
+        _OBJ_KEYS = [
+            ("01_general",      "general"),
+            ("02_active",       "active"),
+            ("03_passive",      "passive"),
+            ("04_neurological", "neurological"),
+            ("05_sensory",      "sensory"),
+            ("06_muscle",       "muscle"),
+            ("07_functional",   "functional"),
+        ]
+        for section_id, json_key in _OBJ_KEYS:
+            section = self.sections.get(section_id)
+            if section is None:
+                continue
+            section.session_file = session_file
+            obj_data = obj_assessment.get(json_key, {})
+            if isinstance(obj_data, dict):
+                section.load(obj_data)
+
         # Update nav indicators and medical tab color
         self._refresh_nav_indicators(nav_data)
         self._update_medical_tab_color()
 
     def _show_section(self, section_id: str) -> None:
-        """Switch to a different section."""
+        """Switch to a section; handles assessment↔objective mode transitions."""
+        # "04 Objective →" button enters objective mode instead of showing a panel
+        if section_id == "04_objective":
+            self._enter_objective_mode()
+            return
+
+        # Pressing an assessment F-key while in objective mode auto-exits
+        if self._in_objective_mode and section_id not in self._OBJECTIVE_IDS:
+            self._in_objective_mode = False
+            try:
+                self.query_one("#obj_sidebar", ObjectiveSidebar).display = False
+                self.query_one("#section_nav", SectionNav).display = True
+            except Exception:
+                pass
+
+        # Track last-visited in each mode for return navigation
+        if section_id in self._OBJECTIVE_IDS:
+            self._last_objective_section_id = section_id
+        else:
+            self._last_assessment_section_id = section_id
+
         if section_id == self.active_section_id:
             return
 
-        # Capture medical tab status when leaving the medical section
+        # Capture medical tab status when leaving
         if self.active_section_id == "03_medical":
             self._update_medical_tab_color()
 
-        # Hide current section
+        # Hide current section, show new
         current = self.sections.get(self.active_section_id)
         if current:
             current.display = False
-
-        # Show new section
         new = self.sections.get(section_id)
         if new:
             new.display = True
             self.active_section_id = section_id
 
-        # Refresh cross-reference badges when entering pain classification or outcome measures
+        # Highlight the correct sidebar
+        if self._in_objective_mode:
+            try:
+                self.query_one("#obj_sidebar", ObjectiveSidebar).set_active(section_id)
+            except Exception:
+                pass
+        else:
+            try:
+                self.query_one("#section_nav", SectionNav).set_active(section_id)
+            except Exception:
+                pass
+
+        # Cross-reference refresh (assessment sections only)
         if section_id == "04_pain_classification":
-            pain_section = self.sections.get("04_pain_classification")
-            if pain_section:
-                pain_section.update_cross_refs()
+            s = self.sections.get("04_pain_classification")
+            if s: s.update_cross_refs()
         elif section_id == "05_outcome_measures":
-            om_section = self.sections.get("05_outcome_measures")
-            if om_section:
-                om_section.update_cross_refs()
+            s = self.sections.get("05_outcome_measures")
+            if s: s.update_cross_refs()
         elif section_id == "06_diagnosis":
-            dx_section = self.sections.get("06_diagnosis")
-            if dx_section:
-                dx_section.update_cross_refs()
+            s = self.sections.get("06_diagnosis")
+            if s: s.update_cross_refs()
         elif section_id == "07_barriers":
-            br_section = self.sections.get("07_barriers")
-            if br_section:
-                br_section.update_cross_refs()
+            s = self.sections.get("07_barriers")
+            if s: s.update_cross_refs()
 
-        # Update nav highlight
-        nav = self.query_one("#section_nav", SectionNav)
-        nav.set_active(section_id)
-
-        # Show subsection nav bar for sections that have one; swap chips to match
-        has_subnav = section_id in ("02_subjective", "03_medical", "04_pain_classification", "05_outcome_measures", "06_diagnosis", "07_barriers")
+        # Subsection nav bar: only for certain assessment sections
+        has_subnav = (not self._in_objective_mode and section_id in (
+            "02_subjective", "03_medical", "04_pain_classification",
+            "05_outcome_measures", "06_diagnosis", "07_barriers",
+        ))
         try:
             nav_bar = self.app.query_one("#subsection_nav_bar")
             nav_bar.display = has_subnav
@@ -358,6 +435,44 @@ class AssessmentView(Container):
                 nav_bar.set_context(section_id)
         except Exception:
             pass
+
+    def _enter_objective_mode(self) -> None:
+        """Swap to objective sidebar and show last-active objective section."""
+        if self._in_objective_mode:
+            # Already in objective mode — navigate to last objective section if needed
+            target = self._last_objective_section_id or "01_general"
+            if target != self.active_section_id:
+                self._show_section(target)
+            return
+
+        self._in_objective_mode = True
+        try:
+            self.query_one("#section_nav", SectionNav).display = False
+            self.query_one("#obj_sidebar", ObjectiveSidebar).display = True
+        except Exception:
+            pass
+        try:
+            self.app.query_one("#subsection_nav_bar").display = False
+        except Exception:
+            pass
+
+        target = self._last_objective_section_id or "01_general"
+        current = self.sections.get(self.active_section_id)
+        if current:
+            current.display = False
+        new = self.sections.get(target)
+        if new:
+            new.display = True
+            self.active_section_id = target
+        try:
+            self.query_one("#obj_sidebar", ObjectiveSidebar).set_active(target)
+        except Exception:
+            pass
+
+    def _exit_objective_mode(self) -> None:
+        """Return to assessment mode, called by '← Assessment' button."""
+        target = self._last_assessment_section_id or "01_consent"
+        self._show_section(target)
 
     def _update_medical_tab_color(self) -> None:
         """Update the 03 Medical nav button to orange/green/red based on urgent red flag review."""
@@ -421,6 +536,26 @@ class AssessmentView(Container):
 
         save_all_sections(self.session_file, assessment_data, sections_complete)
 
+        # Save objective sections to _objective.json
+        _OBJ_KEYS = [
+            ("01_general",      "general"),
+            ("02_active",       "active"),
+            ("03_passive",      "passive"),
+            ("04_neurological", "neurological"),
+            ("05_sensory",      "sensory"),
+            ("06_muscle",       "muscle"),
+            ("07_functional",   "functional"),
+        ]
+        obj_assessment_data: dict = {}
+        obj_sections_complete: dict[str, bool] = {}
+        for section_id, json_key in _OBJ_KEYS:
+            section = self.sections.get(section_id)
+            if section is None:
+                continue
+            obj_assessment_data[json_key] = section.collect()
+            obj_sections_complete[section_id] = section.is_complete()
+        save_objective(self.session_file, obj_assessment_data, obj_sections_complete)
+
         # Update nav indicators from freshly written _assessment.json
         assess_p = assessment_path(self.session_file)
         nav_data = json.loads(assess_p.read_text()) if assess_p.exists() else {}
@@ -461,4 +596,25 @@ class AssessmentView(Container):
         self._schedule_save()
 
     def on_scratchpad_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_active_movement_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_general_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_neurological_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_passive_movement_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_sensory_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_muscle_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_functional_section_field_changed(self) -> None:
         self._schedule_save()

@@ -5,6 +5,10 @@ from textual.css.query import NoMatches
 
 
 class BaseSection(ScrollableContainer):
+
+    DEFAULT_CSS = """
+    BaseSection { padding-bottom: 2; }
+    """
     """Base class for assessment sections.
 
     Sections must implement load(), collect(), and is_complete() methods.
