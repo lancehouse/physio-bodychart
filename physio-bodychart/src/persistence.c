@@ -188,6 +188,10 @@ static json_object *obj_points_to_json(AppState *app)
         json_object_object_add(o, "by",    json_object_new_double(p->by));
         json_object_object_add(o, "value", json_object_new_double(p->value));
         json_object_object_add(o, "label", json_object_new_string(p->label));
+        if (p->anchor.placed) {
+            json_object_object_add(o, "lx", json_object_new_double(p->anchor.lx));
+            json_object_object_add(o, "ly", json_object_new_double(p->anchor.ly));
+        }
         json_object_array_add(arr, o);
     }
     return arr;
@@ -455,6 +459,14 @@ static void load_obj_data(AppState *app, json_object *obj_j)
             p->by    = jd(o, "by",    200.0);
             p->value = jd(o, "value", 0.0);
             strncpy(p->label, js(o, "label"), sizeof(p->label) - 1);
+            json_object *lx_j;
+            if (json_object_object_get_ex(o, "lx", &lx_j)) {
+                p->anchor.lx     = jd(o, "lx", p->bx + 6.0);
+                p->anchor.ly     = jd(o, "ly", p->by - 5.0);
+                p->anchor.placed = 1;
+            } else {
+                p->anchor.placed = 0;
+            }
         }
     }
 }

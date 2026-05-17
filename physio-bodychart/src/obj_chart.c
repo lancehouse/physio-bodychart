@@ -110,6 +110,64 @@ void obj_chart_render_active_body(AppState *app, cairo_t *cr, int view)
     cairo_restore(cr);
 }
 
+/* ── Label anchor resolver ───────────────────────────────────────────────── */
+
+void obj_label_resolve(const ObjPoint *p, double *out_lbx, double *out_lby)
+{
+    if (p->anchor.placed) {
+        *out_lbx = p->anchor.lx;
+        *out_lby = p->anchor.ly;
+    } else {
+        *out_lbx = p->bx + 6.0;
+        *out_lby = p->by - 5.0;
+    }
+}
+
+/* ── Connector (line + arrowhead from label box edge to spot dot) ────────── */
+
+static void draw_obj_connector(cairo_t *cr,
+                                double spot_sx, double spot_sy,
+                                double box_lx,  double box_ly,
+                                double bw,       double bh,
+                                double dr, double dg, double db)
+{
+    double box_cx = box_lx + bw / 2.0;
+    double box_cy = box_ly + bh / 2.0;
+    double dx = spot_sx - box_cx, dy = spot_sy - box_cy;
+    double dist = sqrt(dx * dx + dy * dy);
+    if (dist < 8.0) return;
+
+    double ux = dx / dist, uy = dy / dist;
+
+    /* Exact rectangle-edge start point */
+    double tx = (ux != 0.0) ? (bw / 2.0) / fabs(ux) : 1e9;
+    double ty = (uy != 0.0) ? (bh / 2.0) / fabs(uy) : 1e9;
+    double t  = fmin(tx, ty);
+    double start_x = box_cx + ux * t;
+    double start_y = box_cy + uy * t;
+
+    double spot_r = 6.0;
+    double end_x  = spot_sx - ux * spot_r;
+    double end_y  = spot_sy - uy * spot_r;
+
+    double head = 12.0, hw = 5.0;
+    double px   = -uy, py = ux;
+    double hbx  = end_x - ux * head, hby = end_y - uy * head;
+
+    cairo_set_source_rgba(cr, dr, dg, db, 0.85);
+    cairo_set_line_width(cr, 2.0);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_move_to(cr, start_x, start_y);
+    cairo_line_to(cr, hbx, hby);
+    cairo_stroke(cr);
+
+    cairo_move_to(cr, end_x, end_y);
+    cairo_line_to(cr, hbx + px * hw, hby + py * hw);
+    cairo_line_to(cr, hbx - px * hw, hby - py * hw);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+}
+
 /* ── Rendering — screen space ────────────────────────────────────────────── */
 
 void obj_chart_render_screen(AppState *app, cairo_t *cr, int view,
@@ -119,52 +177,77 @@ void obj_chart_render_screen(AppState *app, cairo_t *cr, int view,
         const ObjPoint *p = &app->obj_points[i];
         if (p->view != view) continue;
 
-        double sx = (p->bx - 100.0) * s + cx;
-        double sy = (p->by - 200.0) * s + cy;
+        /* Spot screen coords */
+        double spot_sx = (p->bx - 100.0) * s + cx;
+        double spot_sy = (p->by - 200.0) * s + cy;
 
-        /* Dot */
-        cairo_save(cr);
-        if (p->type == OBJ_POINT_PPT)
-            cairo_set_source_rgba(cr, 0.15, 0.40, 0.80, 0.90);   /* blue */
-        else if (p->type == OBJ_POINT_MONOFILAMENT)
-            cairo_set_source_rgba(cr, 0.20, 0.65, 0.45, 0.90);   /* teal */
-        else
-            cairo_set_source_rgba(cr, 0.55, 0.15, 0.65, 0.90);   /* purple (TS) */
-        cairo_arc(cr, sx, sy, 5.0, 0, 2 * G_PI);
-        cairo_fill(cr);
+        /* Label screen coords */
+        double lbx, lby;
+        obj_label_resolve(p, &lbx, &lby);
+        double label_sx = (lbx - 100.0) * s + cx;
+        double label_sy = (lby - 200.0) * s + cy;
 
-        /* Label */
-        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
-                               CAIRO_FONT_WEIGHT_BOLD);
-        cairo_set_font_size(cr, 13.5);   /* 50% larger than original 9.0 */
-
+        /* Per-type colours */
+        double dr, dg, db;     /* dot / connector colour */
+        double tr, tg, tb;     /* text colour */
         const char *prefix, *unit;
-        double tr, tg, tb;   /* text colour components */
         if (p->type == OBJ_POINT_PPT) {
-            prefix = "PPT: ";  unit = " kg/cm²";
-            tr = 0.70; tg = 0.88; tb = 1.00;   /* light blue */
+            dr = 0.15; dg = 0.40; db = 0.80;
+            tr = 0.70; tg = 0.88; tb = 1.00;
+            prefix = "PPT: "; unit = " kg/cm²";
         } else if (p->type == OBJ_POINT_MONOFILAMENT) {
-            prefix = "MF: ";   unit = " g";
-            tr = 0.55; tg = 1.00; tb = 0.80;   /* light teal */
+            dr = 0.20; dg = 0.65; db = 0.45;
+            tr = 0.55; tg = 1.00; tb = 0.80;
+            prefix = "MF: ";  unit = " g";
         } else {
-            prefix = "";        unit = "";
-            tr = 0.90; tg = 0.75; tb = 1.00;   /* light purple (TS) */
+            dr = 0.55; dg = 0.15; db = 0.65;
+            tr = 0.90; tg = 0.75; tb = 1.00;
+            prefix = "TS: ";  unit = "";
         }
+
         char buf[48];
         snprintf(buf, sizeof(buf), "%s%s%s", prefix, p->label, unit);
 
-        /* Background box */
+        cairo_save(cr);
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
+                               CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 13.5);
+
+        /* Measure label text */
         cairo_text_extents_t ext;
         cairo_text_extents(cr, buf, &ext);
-        double tx = sx + 7.0;
-        double ty = sy - 4.0;
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.55);
-        cairo_rectangle(cr, tx - 1, ty + ext.y_bearing - 1,
-                        ext.width + 4, ext.height + 2);
+        double pad = 4.0;
+        double bw  = ext.width  - ext.x_bearing + 2.0 * pad;
+        double bh  = -ext.y_bearing + ext.height + 2.0 * pad;
+        double box_lx = label_sx;
+        double box_ly = label_sy - bh;
+
+        /* Connector (drawn behind box) */
+        draw_obj_connector(cr, spot_sx, spot_sy, box_lx, box_ly, bw, bh, dr, dg, db);
+
+        /* Dark label box */
+        cairo_set_source_rgba(cr, 0.04, 0.04, 0.10, 0.82);
+        cairo_rectangle(cr, box_lx, box_ly, bw, bh);
         cairo_fill(cr);
 
+        /* Coloured border */
+        cairo_set_source_rgba(cr, dr, dg, db, 0.75);
+        cairo_set_line_width(cr, 1.2);
+        cairo_rectangle(cr, box_lx, box_ly, bw, bh);
+        cairo_stroke(cr);
+
+        /* Spot dot — white halo + type colour fill */
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.90);
+        cairo_arc(cr, spot_sx, spot_sy, 7.0, 0, 2 * G_PI);
+        cairo_fill(cr);
+        cairo_set_source_rgba(cr, dr, dg, db, 0.95);
+        cairo_arc(cr, spot_sx, spot_sy, 5.5, 0, 2 * G_PI);
+        cairo_fill(cr);
+
+        /* Label text */
         cairo_set_source_rgba(cr, tr, tg, tb, 1.0);
-        cairo_move_to(cr, tx, ty);
+        cairo_move_to(cr, box_lx + pad - ext.x_bearing,
+                          box_ly + pad - ext.y_bearing);
         cairo_show_text(cr, buf);
         cairo_restore(cr);
     }

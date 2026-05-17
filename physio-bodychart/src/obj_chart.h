@@ -1,5 +1,6 @@
 #pragma once
 #include <cairo/cairo.h>
+#include "stroke.h"   /* LabelAnchor */
 
 typedef struct _AppState AppState;   /* full definition in canvas.h */
 
@@ -34,11 +35,12 @@ typedef struct {
 } ObjZone;
 
 typedef struct {
-    double       bx, by;         /* body-space position */
+    double       bx, by;         /* body-space spot (clinical measurement site) */
     double       value;
     int          view;
     ObjPointType type;
     char         label[20];      /* e.g. "4.2" for PPT */
+    LabelAnchor  anchor;         /* draggable text-box position */
 } ObjPoint;
 
 typedef struct {
@@ -52,6 +54,9 @@ extern const ObjZoneDef OBJ_ZONE_DEFS[OBJ_ZONE_COUNT];
 ObjZone *obj_zone_new(ObjZoneType type, int view);
 void     obj_zone_add_pt(ObjZone *z, float bx, float by);
 void     obj_zone_free(ObjZone *z);
+
+/* Resolve label position — also used by canvas.c for hit-testing */
+void obj_label_resolve(const ObjPoint *p, double *out_lbx, double *out_lby);
 
 /* Render objective layer — called from canvas.c */
 void obj_chart_render_body(AppState *app, cairo_t *cr, int view);

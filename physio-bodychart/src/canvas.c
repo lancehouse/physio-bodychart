@@ -414,10 +414,14 @@ static int obj_point_hit_screen(AppState *app, ColData *cd, double sx, double sy
     for (int i = app->obj_point_count - 1; i >= 0; i--) {
         const ObjPoint *p = &app->obj_points[i];
         if (p->view != (int)cd->view) continue;
-        double px = (p->bx - 100.0) * s + cx;
-        double py = (p->by - 200.0) * s + cy;
-        double dx = sx - px, dy = sy - py;
-        if (dx*dx + dy*dy < 22.0 * 22.0) return i;
+        double lbx, lby;
+        obj_label_resolve(p, &lbx, &lby);
+        double lsx = (lbx - 100.0) * s + cx;
+        double lsy = (lby - 200.0) * s + cy;
+        /* Approximate label box: ~210px wide, ~26px tall, box_ly = lsy - bh */
+        if (sx >= lsx        && sx <= lsx + 210 &&
+            sy >= lsy - 26   && sy <= lsy)
+            return i;
     }
     return -1;
 }
@@ -1133,12 +1137,14 @@ static void on_stylus_down(GtkGestureStylus *gs, double x, double y,
             return;
         }
         if (app->obj_point_mode) {
-            /* Drag existing point if tapped, otherwise place new */
+            /* Drag existing point label if hit, otherwise place new */
             int phit = obj_point_hit_screen(app, cd, x, y);
             if (phit >= 0) {
+                double plbx, plby;
+                obj_label_resolve(&app->obj_points[phit], &plbx, &plby);
                 app->obj_point_drag_idx    = phit;
-                app->obj_point_drag_bx_off = app->obj_points[phit].bx - bx;
-                app->obj_point_drag_by_off = app->obj_points[phit].by - by;
+                app->obj_point_drag_bx_off = plbx - bx;
+                app->obj_point_drag_by_off = plby - by;
                 return;
             }
             if (app->show_ppt_entry_cb)
@@ -1206,12 +1212,14 @@ static void on_stylus_motion(GtkGestureStylus *gs, double x, double y,
     }
     if (app->tool == TOOL_NOTE) return;
 
-    /* Obj point drag */
+    /* Obj point label drag */
     if (app->obj_point_drag_idx >= 0) {
         double bx, by;
         screen_to_body(cd, x, y, &bx, &by);
-        app->obj_points[app->obj_point_drag_idx].bx = bx + app->obj_point_drag_bx_off;
-        app->obj_points[app->obj_point_drag_idx].by = by + app->obj_point_drag_by_off;
+        ObjPoint *op = &app->obj_points[app->obj_point_drag_idx];
+        op->anchor.lx     = bx + app->obj_point_drag_bx_off;
+        op->anchor.ly     = by + app->obj_point_drag_by_off;
+        op->anchor.placed = 1;
         gtk_widget_queue_draw(cd->da);
         return;
     }
@@ -1392,9 +1400,11 @@ static void on_drag_begin(GtkGestureDrag *gd, double x, double y, gpointer d)
         if (app->obj_point_mode) {
             int phit = obj_point_hit_screen(app, cd, x, y);
             if (phit >= 0) {
+                double plbx, plby;
+                obj_label_resolve(&app->obj_points[phit], &plbx, &plby);
                 app->obj_point_drag_idx    = phit;
-                app->obj_point_drag_bx_off = app->obj_points[phit].bx - bx;
-                app->obj_point_drag_by_off = app->obj_points[phit].by - by;
+                app->obj_point_drag_bx_off = plbx - bx;
+                app->obj_point_drag_by_off = plby - by;
                 return;
             }
             if (app->show_ppt_entry_cb)
@@ -1443,10 +1453,12 @@ static void on_drag_update(GtkGestureDrag *gd, double dx, double dy,
     }
     if (app->tool == TOOL_NOTE) return;
 
-    /* Obj point drag */
+    /* Obj point label drag */
     if (app->obj_point_drag_idx >= 0) {
-        app->obj_points[app->obj_point_drag_idx].bx = bx + app->obj_point_drag_bx_off;
-        app->obj_points[app->obj_point_drag_idx].by = by + app->obj_point_drag_by_off;
+        ObjPoint *op = &app->obj_points[app->obj_point_drag_idx];
+        op->anchor.lx     = bx + app->obj_point_drag_bx_off;
+        op->anchor.ly     = by + app->obj_point_drag_by_off;
+        op->anchor.placed = 1;
         gtk_widget_queue_draw(cd->da);
         return;
     }
