@@ -22,7 +22,8 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl,
     (void)ctrl; (void)keycode;
     AppState *app = (AppState *)data;
 
-    if ((mods & GDK_CONTROL_MASK) && (keyval == GDK_KEY_q || keyval == GDK_KEY_Q)) {
+    if ((mods & GDK_CONTROL_MASK) && (keyval == GDK_KEY_q || keyval == GDK_KEY_Q ||
+                                       keyval == GDK_KEY_c || keyval == GDK_KEY_C)) {
         gtk_window_destroy(GTK_WINDOW(app->window));
         return TRUE;
     }
@@ -370,7 +371,7 @@ static GtkWidget *g_overlay_nav_box;
 static GtkWidget *g_layout_btns[LAYOUT_COUNT];
 static GtkWidget *g_right_slot_btns[2];
 static GtkWidget *g_mode_btns[APP_MODE_COUNT];
-static GtkWidget *g_file_status_label;   /* shared status in file tab + mode strip */
+static GtkWidget *g_save_indicator;      /* ✓/✗ label next to save button in drag handle */
 static AppState  *g_app_ref;
 
 /* ── Obj mode sidebar widget refs ────────────────────────────────────────── */
@@ -519,6 +520,14 @@ static void update_toolbar_state(AppState *app)
 }
 
 /* ── Auto-save ───────────────────────────────────────────────────────────── */
+static gboolean reset_save_indicator(gpointer data)
+{
+    (void)data;
+    if (g_save_indicator)
+        gtk_label_set_text(GTK_LABEL(g_save_indicator), "");
+    return G_SOURCE_REMOVE;
+}
+
 void window_autosave(AppState *app)
 {
     if (!app->session_file[0]) return;
@@ -527,16 +536,9 @@ void window_autosave(AppState *app)
     if (ok) ok = session_export_obj_png(app);
     if (ok) ok = session_export_combined_png(app);
     persistence_write_session_current(app);
-    if (g_file_status_label) {
-        if (ok) {
-            time_t now = time(NULL);
-            struct tm *t = localtime(&now);
-            char msg[32];
-            strftime(msg, sizeof(msg), "Saved %H:%M", t);
-            gtk_label_set_text(GTK_LABEL(g_file_status_label), msg);
-        } else {
-            gtk_label_set_text(GTK_LABEL(g_file_status_label), "Save failed");
-        }
+    if (g_save_indicator) {
+        gtk_label_set_text(GTK_LABEL(g_save_indicator), ok ? "✓" : "✗");
+        g_timeout_add_seconds(3, reset_save_indicator, NULL);
     }
 }
 
@@ -603,19 +605,17 @@ static void apply_css(void)
         "  background: #e0e0e0; color: #444; border: 1px solid #bbb; border-radius: 4px; }"
         "#zoom-btn:hover { background: #d0d0d0; }"
 
-        /* ── Sidebar + tab bar ── */
+        /* ── Sidebar + drag handle ── */
         "#sidebar { background: #1e1e1e; min-width: 150px; max-width: 150px; }"
         ".drag-handle { background: #444; border-radius: 3px; margin: 2px; }"
         "#drag-handle-btn { background: #333; color: #999; border: 1px solid #555;"
         "  font-size: 14px; padding: 0; border-radius: 2px; }"
         "#drag-handle-btn:hover { background: #444; color: #ccc; }"
-        "#tab-bar { background: #151515; padding: 2px 2px 0 2px; }"
-        "#tab-btn { background: #2a2a2a; color: #777; font-size: 11px;"
-        "  border-radius: 4px 4px 0 0; min-height: 34px; min-width: 0;"
-        "  border: none; padding: 0 4px; }"
-        "#tab-btn-active { background: #1e1e1e; color: #fff; font-size: 11px;"
-        "  border-radius: 4px 4px 0 0; min-height: 34px; min-width: 0;"
-        "  border: none; padding: 0 4px; }"
+        "#save-btn { background: #1a2a1a; color: #6a9; border: 1px solid #2a4a2a;"
+        "  border-radius: 2px; padding: 0 4px; min-height: 20px; }"
+        "#save-btn:hover { background: #243a24; color: #8bc; }"
+        "#save-indicator { color: #6f9; font-size: 11px; font-weight: bold;"
+        "  padding: 0 2px; min-width: 10px; }"
 
         /* ── Mode strip ── */
         "#mode-strip { background: #111118; padding: 3px; }"
@@ -625,8 +625,7 @@ static void apply_css(void)
         "#mode-btn-active { background: #1a3a5a; color: #8cf; font-size: 12px; font-weight: bold;"
         "  border-radius: 4px; min-height: 34px; min-width: 0; border: 2px solid #3a7aaa; }"
 
-        /* ── File tab + launch dialog ── */
-        "#file-status { color: #7bc; font-size: 10px; padding: 4px 2px; }"
+        /* ── Launch dialog ── */
         "#launch-win { background: #1a1a2a; }"
         "#launch-title { font-size: 18px; font-weight: bold; color: #cdf;"
         "  margin-bottom: 6px; }"
@@ -697,24 +696,13 @@ static void apply_css(void)
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
-/* ── Tab state ───────────────────────────────────────────────────────────── */
-#define N_TABS 2
-static GtkWidget *g_tab_stack;
-static GtkWidget *g_tab_btns[N_TABS];
-
-static const char *TAB_NAMES[N_TABS] = { "draw", "file" };
-
-static void set_active_tab(int idx)
+/* ── Timed autosave (JSON only — no PNG exports) ─────────────────────────── */
+static gboolean on_autosave_timer(gpointer data)
 {
-    gtk_stack_set_visible_child_name(GTK_STACK(g_tab_stack), TAB_NAMES[idx]);
-    for (int i = 0; i < N_TABS; i++)
-        gtk_widget_set_name(g_tab_btns[i], i == idx ? "tab-btn-active" : "tab-btn");
-}
-
-static void on_tab_clicked(GtkButton *btn, gpointer data)
-{
-    (void)btn;
-    set_active_tab((int)(gintptr)data);
+    (void)data;
+    if (g_app_ref && g_app_ref->session_file[0])
+        persistence_save(g_app_ref);
+    return G_SOURCE_CONTINUE;
 }
 
 /* ── Save / export callbacks ─────────────────────────────────────────────── */
@@ -724,22 +712,9 @@ static void do_export(const char *ext)
     char path[1024];
     session_auto_path(path, sizeof(path), ext);
 
-    gboolean ok = FALSE;
-    if      (strcmp(ext, "svg") == 0) ok = session_save(g_app_ref, path);
-    else if (strcmp(ext, "png") == 0) ok = session_export_png(g_app_ref, path);
-    else if (strcmp(ext, "pdf") == 0) ok = session_export_pdf(g_app_ref, path);
-
-    if (ok) {
-        const char *name = strrchr(path, '/');
-        name = name ? name + 1 : path;
-        char msg[1100];
-        snprintf(msg, sizeof(msg), "Exported:\n%s", name);
-        if (g_file_status_label)
-            gtk_label_set_text(GTK_LABEL(g_file_status_label), msg);
-    } else {
-        if (g_file_status_label)
-            gtk_label_set_text(GTK_LABEL(g_file_status_label), "Export failed");
-    }
+    if      (strcmp(ext, "svg") == 0) session_save(g_app_ref, path);
+    else if (strcmp(ext, "png") == 0) session_export_png(g_app_ref, path);
+    else if (strcmp(ext, "pdf") == 0) session_export_pdf(g_app_ref, path);
 }
 
 static void on_save_session(GtkButton *b, gpointer d)
@@ -747,9 +722,6 @@ static void on_save_session(GtkButton *b, gpointer d)
     (void)b; (void)d;
     if (g_app_ref) window_autosave(g_app_ref);
 }
-static void on_save_svg(GtkButton *b, gpointer d) { (void)b; (void)d; do_export("svg"); }
-static void on_save_png(GtkButton *b, gpointer d) { (void)b; (void)d; do_export("png"); }
-static void on_save_pdf(GtkButton *b, gpointer d) { (void)b; (void)d; do_export("pdf"); }
 
 /* Public wrapper used by keyboard shortcuts in input.c */
 void window_do_export(const char *ext) { do_export(ext); }
@@ -1187,62 +1159,6 @@ static GtkWidget *build_draw_tab(AppState *app)
     return box;
 }
 
-/* ── Build "File" tab content ────────────────────────────────────────────── */
-static GtkWidget *build_file_tab(void)
-{
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_widget_set_margin_top(box, 6);
-    gtk_widget_set_margin_start(box, 4);
-    gtk_widget_set_margin_end(box, 4);
-
-    /* Session save */
-    GtkWidget *lbl1 = gtk_label_new("Session");
-    gtk_widget_set_name(lbl1, "section-label");
-    gtk_box_append(GTK_BOX(box), lbl1);
-
-    GtkWidget *save_btn = make_btn("Save", -1, 44);
-    gtk_widget_set_hexpand(save_btn, TRUE);
-    g_signal_connect(save_btn, "clicked", G_CALLBACK(on_save_session), NULL);
-    gtk_box_append(GTK_BOX(box), save_btn);
-
-    gtk_box_append(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
-
-    /* Legacy image exports */
-    GtkWidget *lbl2 = gtk_label_new("Export");
-    gtk_widget_set_name(lbl2, "section-label");
-    gtk_box_append(GTK_BOX(box), lbl2);
-
-    GtkWidget *exp_grid = make_grid2col();
-    GtkWidget *svg_btn = make_btn("SVG", -1, 38);
-    gtk_widget_set_hexpand(svg_btn, TRUE);
-    g_signal_connect(svg_btn, "clicked", G_CALLBACK(on_save_svg), NULL);
-    gtk_grid_attach(GTK_GRID(exp_grid), svg_btn, 0, 0, 1, 1);
-
-    GtkWidget *png_btn = make_btn("PNG", -1, 38);
-    gtk_widget_set_hexpand(png_btn, TRUE);
-    g_signal_connect(png_btn, "clicked", G_CALLBACK(on_save_png), NULL);
-    gtk_grid_attach(GTK_GRID(exp_grid), png_btn, 1, 0, 1, 1);
-
-    GtkWidget *pdf_btn = make_btn("PDF", -1, 38);
-    gtk_widget_set_hexpand(pdf_btn, TRUE);
-    g_signal_connect(pdf_btn, "clicked", G_CALLBACK(on_save_pdf), NULL);
-    gtk_grid_attach(GTK_GRID(exp_grid), pdf_btn, 0, 1, 2, 1);
-    gtk_box_append(GTK_BOX(box), exp_grid);
-
-    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_vexpand(spacer, TRUE);
-    gtk_box_append(GTK_BOX(box), spacer);
-
-    g_file_status_label = gtk_label_new("");
-    gtk_widget_set_name(g_file_status_label, "file-status");
-    gtk_label_set_wrap(GTK_LABEL(g_file_status_label), TRUE);
-    gtk_label_set_justify(GTK_LABEL(g_file_status_label), GTK_JUSTIFY_CENTER);
-    gtk_widget_set_margin_bottom(g_file_status_label, 6);
-    gtk_box_append(GTK_BOX(box), g_file_status_label);
-
-    return box;
-}
-
 /* ── PPT / TS value entry dialog ─────────────────────────────────────────── */
 typedef struct {
     AppState    *app;
@@ -1609,9 +1525,10 @@ static void on_close_clicked(GtkButton *btn, gpointer data)
 static GtkWidget *build_drag_handle(AppState *app)
 {
     GtkWidget *handle = gtk_window_handle_new();
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
     gtk_window_handle_set_child(GTK_WINDOW_HANDLE(handle), box);
 
+    /* Left group: − □ [save icon + indicator] */
     GtkWidget *min_btn = gtk_button_new_with_label("−");
     gtk_widget_set_name(min_btn, "drag-handle-btn");
     gtk_widget_set_size_request(min_btn, 20, 20);
@@ -1624,19 +1541,39 @@ static GtkWidget *build_drag_handle(AppState *app)
     g_signal_connect(max_btn, "clicked", G_CALLBACK(on_maximize_clicked), app);
     gtk_box_append(GTK_BOX(box), max_btn);
 
+    /* Save button: icon + ✓/✗ indicator */
+    GtkWidget *save_btn = gtk_button_new();
+    gtk_widget_set_name(save_btn, "save-btn");
+    gtk_widget_set_size_request(save_btn, -1, 20);
+    GtkWidget *save_inner = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    GtkWidget *save_icon = gtk_image_new_from_icon_name("document-save-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(save_icon), 12);
+    g_save_indicator = gtk_label_new("");
+    gtk_widget_set_name(g_save_indicator, "save-indicator");
+    gtk_box_append(GTK_BOX(save_inner), save_icon);
+    gtk_box_append(GTK_BOX(save_inner), g_save_indicator);
+    gtk_button_set_child(GTK_BUTTON(save_btn), save_inner);
+    g_signal_connect(save_btn, "clicked", G_CALLBACK(on_save_session), NULL);
+    gtk_box_append(GTK_BOX(box), save_btn);
+
+    /* Spacer pushes close button to the right */
+    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(box), spacer);
+
+    /* Right: × close */
     GtkWidget *close_btn = gtk_button_new_with_label("×");
     gtk_widget_set_name(close_btn, "drag-handle-btn");
     gtk_widget_set_size_request(close_btn, 20, 20);
     g_signal_connect(close_btn, "clicked", G_CALLBACK(on_close_clicked), app);
     gtk_box_append(GTK_BOX(box), close_btn);
 
-    gtk_widget_set_halign(handle, GTK_ALIGN_START);
+    gtk_widget_set_hexpand(handle, TRUE);
     gtk_widget_set_valign(handle, GTK_ALIGN_START);
-    gtk_widget_set_size_request(handle, 60, 20);
     return handle;
 }
 
-/* ── Build tabbed sidebar ────────────────────────────────────────────────── */
+/* ── Build sidebar ───────────────────────────────────────────────────────── */
 static GtkWidget *build_sidebar(AppState *app)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -1644,60 +1581,25 @@ static GtkWidget *build_sidebar(AppState *app)
     gtk_widget_set_size_request(outer, 150, -1);
     gtk_widget_set_hexpand(outer, FALSE);
 
-    GtkWidget *drag_handle = build_drag_handle(app);
-    gtk_box_append(GTK_BOX(outer), drag_handle);
+    gtk_box_append(GTK_BOX(outer), build_drag_handle(app));
 
     /* Mode strip */
     gtk_box_append(GTK_BOX(outer), build_mode_strip(app));
     gtk_box_append(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
 
-    /* Outer content stack: switches between Sx content, Obj tab, Rpt placeholder */
+    /* Content stack: switches between Sx draw content and Obj content */
     g_sidebar_content_stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(g_sidebar_content_stack),
                                   GTK_STACK_TRANSITION_TYPE_NONE);
     gtk_widget_set_vexpand(g_sidebar_content_stack, TRUE);
 
-    /* ── Sx content: D/F tab bar + draw/file stack ── */
-    GtkWidget *sx_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_vexpand(sx_box, TRUE);
-
-    GtkWidget *tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_name(tab_bar, "tab-bar");
-    static const char *tab_labels[N_TABS] = { "D", "F" };
-    for (int i = 0; i < N_TABS; i++) {
-        GtkWidget *btn = gtk_button_new_with_label(tab_labels[i]);
-        gtk_widget_set_name(btn, "tab-btn");
-        gtk_widget_set_hexpand(btn, TRUE);
-        gtk_widget_set_size_request(btn, -1, 34);
-        g_signal_connect(btn, "clicked", G_CALLBACK(on_tab_clicked),
-                         (gpointer)(gintptr)i);
-        g_tab_btns[i] = btn;
-        gtk_box_append(GTK_BOX(tab_bar), btn);
-    }
-    gtk_box_append(GTK_BOX(sx_box), tab_bar);
-
-    g_tab_stack = gtk_stack_new();
-    gtk_stack_set_transition_type(GTK_STACK(g_tab_stack),
-                                  GTK_STACK_TRANSITION_TYPE_NONE);
-    gtk_widget_set_vexpand(g_tab_stack, TRUE);
-
-    #define ADD_TAB(child, name) \
-    do { \
-        GtkWidget *_sc = gtk_scrolled_window_new(); \
-        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(_sc), \
-                                       GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC); \
-        gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(_sc), FALSE); \
-        gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(_sc), (child)); \
-        gtk_stack_add_named(GTK_STACK(g_tab_stack), _sc, (name)); \
-    } while (0)
-
-    ADD_TAB(build_draw_tab(app), "draw");
-    ADD_TAB(build_file_tab(),    "file");
-
-    #undef ADD_TAB
-
-    gtk_box_append(GTK_BOX(sx_box), g_tab_stack);
-    gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), sx_box, "sx");
+    /* ── Sx content: draw tools directly in scrolled window ── */
+    GtkWidget *sx_sc = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sx_sc),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_has_frame(GTK_SCROLLED_WINDOW(sx_sc), FALSE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sx_sc), build_draw_tab(app));
+    gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), sx_sc, "sx");
 
     /* ── Obj content ── */
     GtkWidget *obj_sc = gtk_scrolled_window_new();
@@ -1708,8 +1610,6 @@ static GtkWidget *build_sidebar(AppState *app)
     gtk_stack_add_named(GTK_STACK(g_sidebar_content_stack), obj_sc, "obj");
 
     gtk_box_append(GTK_BOX(outer), g_sidebar_content_stack);
-
-    set_active_tab(0);
     return outer;
 }
 
@@ -2007,4 +1907,7 @@ void window_create(AppState *app, GtkApplication *gtk_app)
 
     update_toolbar_state(app);
     gtk_window_present(GTK_WINDOW(app->window));
+
+    /* 30-second JSON autosave — JSON only, no PNG export overhead */
+    g_timeout_add_seconds(30, on_autosave_timer, NULL);
 }
