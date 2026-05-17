@@ -6,6 +6,7 @@
 #include "overlays.h"
 #include "svg_views.h"
 #include "overlay_svg.h"
+#include "svg_regions.h"
 #include "settings.h"
 #include "input.h"
 #include "persistence.h"
@@ -86,6 +87,7 @@ int main(int argc, char *argv[])
     input_hotkeys_init(&state);   /* set defaults; settings_load may override */
     settings_load(&state);
     settings_apply_args(&state, &argc, argv);
+    svg_regions_load(&state.svg_regions);
 
     GtkApplication *gtk_app = gtk_application_new(
         "com.physio.bodychart",

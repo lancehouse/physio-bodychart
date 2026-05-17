@@ -864,6 +864,7 @@ static void wizard_commit(WizardData *wd)
         na->view          = wd->view;
         na->bx            = wd->bx;
         na->by            = wd->by;
+        na->stable_id     = app->next_note_id++;
         na->number        = app->note_count + 1;
         na->temporal      = wd->temporal;
         na->depth         = wd->depth;

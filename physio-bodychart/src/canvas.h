@@ -7,6 +7,7 @@
 #include "input.h"
 #include "obj_chart.h"
 #include "report.h"
+#include "svg_regions.h"
 
 typedef enum {
     APP_MODE_SUBJECTIVE = 0,
@@ -174,6 +175,11 @@ struct _AppState {
     GFileMonitor *focus_monitor;         /* dir watcher for .focus_gtk signal file */
     char     tui_socket[256];            /* kitty remote-control socket path */
     gint64   last_own_save_us;           /* timestamp of last persistence_save() call */
+    int      next_stroke_id;             /* monotonic counter — never decremented on undo */
+    int      next_note_id;              /* monotonic counter — never decremented on undo */
+
+    /* Body region SVG — loaded once at startup, used for spatial association */
+    SvgRegions svg_regions;
 
     /* ── Objective chart ─────────────────────────────────────────────────────── */
     ObjZone  *obj_zones[MAX_OBJ_ZONES];

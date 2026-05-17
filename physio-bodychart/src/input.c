@@ -155,6 +155,7 @@ void input_end(AppState *app)
                         (app->active_stroke->type == SYMPTOM_TICK &&
                          app->active_stroke->n_pts >= 1);
         if (keep) {
+            app->active_stroke->id = app->next_stroke_id++;
             stroke_list_push(app->strokes, app->active_stroke);
             if (app->undo_type_top < 64)
                 app->undo_type_stack[app->undo_type_top++] = 0;

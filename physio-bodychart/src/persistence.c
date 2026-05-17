@@ -66,6 +66,7 @@ static json_object *strokes_to_json(StrokeList *sl)
     for (int i = 0; i < sl->n; i++) {
         Stroke *sk = sl->strokes[i];
         json_object *s = json_object_new_object();
+        json_object_object_add(s, "id",   json_object_new_int(sk->id));
         json_object_object_add(s, "type", json_object_new_int(sk->type));
         json_object_object_add(s, "view", json_object_new_int(sk->view));
         json_object_object_add(s, "wide", json_object_new_boolean(sk->wide_mode));
@@ -79,33 +80,6 @@ static json_object *strokes_to_json(StrokeList *sl)
         }
         json_object_object_add(s, "pts", pts);
         json_object_array_add(arr, s);
-    }
-    return arr;
-}
-
-static json_object *notes_to_json(AppState *app)
-{
-    json_object *arr = json_object_new_array();
-    for (int i = 0; i < app->note_count; i++) {
-        NoteAnnotation *n = &app->notes[i];
-        json_object *o = json_object_new_object();
-        json_object_object_add(o, "view",    json_object_new_int(n->view));
-        json_object_object_add(o, "bx",      json_object_new_double(n->bx));
-        json_object_object_add(o, "by",      json_object_new_double(n->by));
-        json_object_object_add(o, "number",  json_object_new_int(n->number));
-        json_object_object_add(o, "temporal",json_object_new_int(n->temporal));
-        json_object_object_add(o, "depth",   json_object_new_int(n->depth));
-        json_object *quals = json_object_new_array();
-        for (int q = 0; q < n->quality_count; q++)
-            json_object_array_add(quals, json_object_new_int(n->qualities[q]));
-        json_object_object_add(o, "qualities", quals);
-        json_object_object_add(o, "low",     json_object_new_int(n->low_intensity));
-        json_object_object_add(o, "high",    json_object_new_int(n->high_intensity));
-        if (n->label.placed) {
-            json_object_object_add(o, "lx",     json_object_new_double(n->label.lx));
-            json_object_object_add(o, "ly",     json_object_new_double(n->label.ly));
-        }
-        json_object_array_add(arr, o);
     }
     return arr;
 }
@@ -197,6 +171,248 @@ static json_object *obj_points_to_json(AppState *app)
     return arr;
 }
 
+/* ── Stroke clustering ────────────────────────────────────────────────────── *
+ * Groups strokes into clusters: same SymptomType + same view + padded bbox   *
+ * overlap (Option B — no point-to-point proximity).                          *
+ * Clusters are derived data recomputed on every save — not stored in AppState.*/
+
+#define STROKE_CLUSTER_PADDING_BU 5.0f
+#define NOTE_ASSOC_THRESHOLD_BU   30.0f  /* max body-unit dist: note → cluster centroid */
+
+typedef struct {
+    int    id;
+    int    view;
+    int    type;
+    double centroid_bx;
+    double centroid_by;
+    char   region_label[80];
+    int   *stroke_ids;
+    int    n_stroke_ids;
+} ClusterMeta;
+
+static void cluster_meta_free(ClusterMeta *meta, int n)
+{
+    for (int i = 0; i < n; i++)
+        g_free(meta[i].stroke_ids);
+    g_free(meta);
+}
+
+static void stroke_bbox(const Stroke *s,
+                        float *x0, float *y0, float *x1, float *y1)
+{
+    *x0 = *y0 =  1e9f;
+    *x1 = *y1 = -1e9f;
+    for (size_t i = 0; i < s->n_pts; i++) {
+        if (s->pts[i].x < *x0) *x0 = s->pts[i].x;
+        if (s->pts[i].y < *y0) *y0 = s->pts[i].y;
+        if (s->pts[i].x > *x1) *x1 = s->pts[i].x;
+        if (s->pts[i].y > *y1) *y1 = s->pts[i].y;
+    }
+}
+
+static gboolean bboxes_overlap_padded(float ax0, float ay0, float ax1, float ay1,
+                                      float bx0, float by0, float bx1, float by1,
+                                      float pad)
+{
+    return (ax0 - pad <= bx1 + pad) && (ax1 + pad >= bx0 - pad) &&
+           (ay0 - pad <= by1 + pad) && (ay1 + pad >= by0 - pad);
+}
+
+static int uf_find(int *parent, int i)
+{
+    while (parent[i] != i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+    }
+    return i;
+}
+
+static void uf_union(int *parent, int i, int j)
+{
+    i = uf_find(parent, i);
+    j = uf_find(parent, j);
+    if (i != j) parent[j] = i;
+}
+
+/* Compute clusters, returning heap-allocated ClusterMeta array (caller frees
+ * via cluster_meta_free).  Returns NULL when there are no strokes. */
+static ClusterMeta *compute_clusters(AppState *app, int *n_out)
+{
+    int n = app->strokes->n;
+    *n_out = 0;
+    if (n == 0) return NULL;
+
+    float *x0     = g_malloc(n * sizeof(float));
+    float *y0     = g_malloc(n * sizeof(float));
+    float *x1     = g_malloc(n * sizeof(float));
+    float *y1     = g_malloc(n * sizeof(float));
+    int   *parent = g_malloc(n * sizeof(int));
+
+    for (int i = 0; i < n; i++) {
+        stroke_bbox(app->strokes->strokes[i], &x0[i], &y0[i], &x1[i], &y1[i]);
+        parent[i] = i;
+    }
+
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            Stroke *si = app->strokes->strokes[i];
+            Stroke *sj = app->strokes->strokes[j];
+            if (si->type != sj->type || si->view != sj->view) continue;
+            if (bboxes_overlap_padded(x0[i], y0[i], x1[i], y1[i],
+                                      x0[j], y0[j], x1[j], y1[j],
+                                      STROKE_CLUSTER_PADDING_BU))
+                uf_union(parent, i, j);
+        }
+    }
+
+    /* Collect unique roots in first-occurrence order */
+    int *roots   = g_malloc(n * sizeof(int));
+    int  n_roots = 0;
+    for (int i = 0; i < n; i++) {
+        int r = uf_find(parent, i);
+        gboolean found = FALSE;
+        for (int k = 0; k < n_roots; k++)
+            if (roots[k] == r) { found = TRUE; break; }
+        if (!found) roots[n_roots++] = r;
+    }
+
+    ClusterMeta *meta = g_malloc(n_roots * sizeof(ClusterMeta));
+
+    for (int ci = 0; ci < n_roots; ci++) {
+        int root = roots[ci];
+        ClusterMeta *m = &meta[ci];
+        m->id            = ci;
+        m->view          = app->strokes->strokes[root]->view;
+        m->type          = app->strokes->strokes[root]->type;
+        m->centroid_bx   = 0.0;
+        m->centroid_by   = 0.0;
+        m->region_label[0] = '\0';
+        m->stroke_ids    = NULL;
+        m->n_stroke_ids  = 0;
+
+        /* Count member strokes first, then allocate */
+        int n_sk = 0;
+        for (int i = 0; i < n; i++)
+            if (uf_find(parent, i) == root) n_sk++;
+        m->stroke_ids = g_malloc(n_sk * sizeof(int));
+
+        int pt_count = 0;
+        for (int i = 0; i < n; i++) {
+            if (uf_find(parent, i) != root) continue;
+            Stroke *sk = app->strokes->strokes[i];
+            m->stroke_ids[m->n_stroke_ids++] = sk->id;
+            for (size_t p = 0; p < sk->n_pts; p++) {
+                m->centroid_bx += sk->pts[p].x;
+                m->centroid_by += sk->pts[p].y;
+                pt_count++;
+            }
+        }
+        if (pt_count > 0) {
+            m->centroid_bx /= pt_count;
+            m->centroid_by /= pt_count;
+        }
+
+        if (app->svg_regions.loaded) {
+            const SvgRegionLayer *ly = svg_regions_hit(
+                &app->svg_regions, m->view,
+                (float)m->centroid_bx, (float)m->centroid_by);
+            if (ly) g_strlcpy(m->region_label, ly->name, sizeof(m->region_label));
+        }
+    }
+
+    g_free(x0); g_free(y0); g_free(x1); g_free(y1);
+    g_free(parent); g_free(roots);
+    *n_out = n_roots;
+    return meta;
+}
+
+static json_object *clusters_meta_to_json(const ClusterMeta *meta, int n)
+{
+    json_object *arr = json_object_new_array();
+    for (int ci = 0; ci < n; ci++) {
+        const ClusterMeta *m = &meta[ci];
+        json_object *c = json_object_new_object();
+        json_object_object_add(c, "id",           json_object_new_int(m->id));
+        json_object_object_add(c, "view",         json_object_new_int(m->view));
+        json_object_object_add(c, "type",         json_object_new_int(m->type));
+        json_object_object_add(c, "centroid_bx",  json_object_new_double(m->centroid_bx));
+        json_object_object_add(c, "centroid_by",  json_object_new_double(m->centroid_by));
+        json_object_object_add(c, "region_label", json_object_new_string(m->region_label));
+        json_object *ids = json_object_new_array();
+        for (int k = 0; k < m->n_stroke_ids; k++)
+            json_object_array_add(ids, json_object_new_int(m->stroke_ids[k]));
+        json_object_object_add(c, "stroke_ids", ids);
+        json_object_array_add(arr, c);
+    }
+    return arr;
+}
+
+static json_object *notes_to_json(AppState *app,
+                                   const ClusterMeta *clusters, int n_clusters)
+{
+    json_object *arr = json_object_new_array();
+    for (int i = 0; i < app->note_count; i++) {
+        NoteAnnotation *n = &app->notes[i];
+        json_object *o = json_object_new_object();
+        json_object_object_add(o, "stable_id",json_object_new_int(n->stable_id));
+        json_object_object_add(o, "view",    json_object_new_int(n->view));
+        json_object_object_add(o, "bx",      json_object_new_double(n->bx));
+        json_object_object_add(o, "by",      json_object_new_double(n->by));
+        json_object_object_add(o, "number",  json_object_new_int(n->number));
+        json_object_object_add(o, "temporal",json_object_new_int(n->temporal));
+        json_object_object_add(o, "depth",   json_object_new_int(n->depth));
+        json_object *quals = json_object_new_array();
+        for (int q = 0; q < n->quality_count; q++)
+            json_object_array_add(quals, json_object_new_int(n->qualities[q]));
+        json_object_object_add(o, "qualities", quals);
+        json_object_object_add(o, "low",     json_object_new_int(n->low_intensity));
+        json_object_object_add(o, "high",    json_object_new_int(n->high_intensity));
+        if (n->label.placed) {
+            json_object_object_add(o, "lx",     json_object_new_double(n->label.lx));
+            json_object_object_add(o, "ly",     json_object_new_double(n->label.ly));
+        }
+
+        /* Spatial association: region the note dot sits in */
+        const char *region_label = "";
+        if (app->svg_regions.loaded) {
+            const SvgRegionLayer *ly = svg_regions_hit(
+                &app->svg_regions, n->view, (float)n->bx, (float)n->by);
+            if (ly) region_label = ly->name;
+        }
+        json_object_object_add(o, "region_label", json_object_new_string(region_label));
+
+        /* Clusters within threshold distance → associated_cluster_ids + distribution_labels */
+        json_object *assoc_ids = json_object_new_array();
+        json_object *dist_arr  = json_object_new_array();
+        char seen[16][80];
+        int  n_seen = 0;
+        double thresh2 = NOTE_ASSOC_THRESHOLD_BU * NOTE_ASSOC_THRESHOLD_BU;
+        for (int ci = 0; ci < n_clusters; ci++) {
+            const ClusterMeta *m = &clusters[ci];
+            if (m->view != n->view) continue;
+            double dx = m->centroid_bx - n->bx;
+            double dy = m->centroid_by - n->by;
+            if (dx * dx + dy * dy > thresh2) continue;
+            json_object_array_add(assoc_ids, json_object_new_int(m->id));
+            if (m->region_label[0] && n_seen < 16) {
+                gboolean found = FALSE;
+                for (int k = 0; k < n_seen; k++)
+                    if (strcmp(seen[k], m->region_label) == 0) { found = TRUE; break; }
+                if (!found) {
+                    g_strlcpy(seen[n_seen++], m->region_label, 80);
+                    json_object_array_add(dist_arr,
+                        json_object_new_string(m->region_label));
+                }
+            }
+        }
+        json_object_object_add(o, "associated_cluster_ids", assoc_ids);
+        json_object_object_add(o, "distribution_labels",    dist_arr);
+
+        json_object_array_add(arr, o);
+    }
+    return arr;
+}
+
 /* ── Save ─────────────────────────────────────────────────────────────────── */
 
 gboolean persistence_save(AppState *app)
@@ -248,11 +464,18 @@ gboolean persistence_save(AppState *app)
     json_object_object_add(ui, "right_slot_views", rsv);
     json_object_object_add(root, "ui", ui);
 
-    /* Subjective chart */
+    /* Subjective chart — compute clusters once, share with notes serialiser */
+    int          n_clusters = 0;
+    ClusterMeta *clusters   = compute_clusters(app, &n_clusters);
+
     json_object *subj = json_object_new_object();
-    json_object_object_add(subj, "strokes",        strokes_to_json(app->strokes));
-    json_object_object_add(subj, "notes",          notes_to_json(app));
-    json_object_object_add(subj, "arrows",         arrows_to_json(app));
+    json_object_object_add(subj, "strokes",
+        strokes_to_json(app->strokes));
+    json_object_object_add(subj, "stroke_clusters",
+        clusters_meta_to_json(clusters, n_clusters));
+    json_object_object_add(subj, "notes",
+        notes_to_json(app, clusters, n_clusters));
+    json_object_object_add(subj, "arrows",          arrows_to_json(app));
     json_object_object_add(subj, "link_matrix",    link_matrix_to_json(app));
     json_object_object_add(subj, "link_relations", link_relations_to_json(app));
     json_object_object_add(subj, "link_summary_active",
@@ -353,6 +576,7 @@ gboolean persistence_save(AppState *app)
     fputs(json_str, f);
     fclose(f);
     json_object_put(root);
+    cluster_meta_free(clusters, n_clusters);
     fprintf(stderr, "persistence_save: %s\n", app->session_file);
     return TRUE;
 }
@@ -488,6 +712,8 @@ gboolean persistence_load(AppState *app, const char *path)
     app->link_summary_active = FALSE;
     app->undo_type_top   = 0;
     memset(app->link_matrix, 0, sizeof(app->link_matrix));
+    app->next_stroke_id  = 0;
+    app->next_note_id    = 0;
 
     /* Set paths from loaded file */
     strncpy(app->session_file, path, sizeof(app->session_file) - 1);
@@ -555,9 +781,16 @@ gboolean persistence_load(AppState *app, const char *path)
             int type = ji(s, "type", 0);
             int view = ji(s, "view", 0);
             int wide = jb(s, "wide", FALSE);
+            int sid  = ji(s, "id",   -1);
             if (type < 0 || type >= SYMPTOM_COUNT) continue;
             Stroke *sk = stroke_new((SymptomType)type, view);
             sk->wide_mode = wide;
+            if (sid >= 0) {
+                sk->id = sid;
+                if (sid >= app->next_stroke_id) app->next_stroke_id = sid + 1;
+            } else {
+                sk->id = app->next_stroke_id++;  /* back-compat: old sessions without id */
+            }
             json_object *pts;
             if (json_object_object_get_ex(s, "pts", &pts)) {
                 int np = (int)json_object_array_length(pts);
@@ -589,10 +822,19 @@ gboolean persistence_load(AppState *app, const char *path)
         for (int i = 0; i < n; i++) {
             json_object *o = json_object_array_get_idx(notes_arr, i);
             NoteAnnotation *na = &app->notes[app->note_count];
-            na->view            = ji(o, "view",    0);
-            na->bx              = jd(o, "bx",      0.0);
-            na->by              = jd(o, "by",      0.0);
-            na->number          = ji(o, "number",  i + 1);
+            na->view            = ji(o, "view",      0);
+            na->bx              = jd(o, "bx",        0.0);
+            na->by              = jd(o, "by",        0.0);
+            na->number          = ji(o, "number",    i + 1);
+            {
+                int sid = ji(o, "stable_id", -1);
+                if (sid >= 0) {
+                    na->stable_id = sid;
+                    if (sid >= app->next_note_id) app->next_note_id = sid + 1;
+                } else {
+                    na->stable_id = app->next_note_id++;
+                }
+            }
             na->temporal        = ji(o, "temporal",0);
             na->depth           = ji(o, "depth",   0);
             /* Load qualities — new array format; fall back to legacy "quality" int */

@@ -39,6 +39,7 @@ typedef struct {
 typedef struct {
     int          view;
     double       bx, by;          /* body-space spot (where user tapped) */
+    int          stable_id;       /* monotonic, never reused after undo */
     int          number;          /* sequential 1-10 */
     int          temporal;        /* 0=Constant, 1=Intermittent */
     int          depth;           /* 0=Superficial, 1=Deep */
@@ -72,6 +73,7 @@ typedef struct {
     SymptomType   type;
     int           view;       /* which body view this belongs to */
     int           wide_mode;  /* 1 = wide band (2–7 bu), 0 = thin (0.8–4.5 bu) */
+    int           id;         /* monotonic, never reused after undo */
 } Stroke;
 
 /* ── The undo stack ─────────────────────────────────────────────────────── */
