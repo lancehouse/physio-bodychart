@@ -872,8 +872,9 @@ static void wizard_commit(WizardData *wd)
             na->qualities[i] = wd->qualities[i];
         na->low_intensity  = wd->low_int  >= 0 ? wd->low_int  : 0;
         na->high_intensity = wd->high_int >= 0 ? wd->high_int : 0;
+        na->label.placed   = 0;   /* default offset; user can drag later */
 
-        /* Build preformatted text */
+        /* Build preformatted text — '\n' splits the two display lines */
         char qual_buf[64] = {0};
         for (int i = 0; i < na->quality_count; i++) {
             if (i > 0) strncat(qual_buf, "+", sizeof(qual_buf) - strlen(qual_buf) - 1);
@@ -882,7 +883,7 @@ static void wizard_commit(WizardData *wd)
         }
         if (na->quality_count == 0)
             strncat(qual_buf, "?", sizeof(qual_buf) - strlen(qual_buf) - 1);
-        snprintf(na->text, sizeof(na->text), "(%d)%s %s %s %d-%d/10",
+        snprintf(na->text, sizeof(na->text), "(%d)%s %s %s\n%d-%d/10",
                  na->number,
                  na->temporal == 0 ? "Con" : "Int",
                  na->depth    == 0 ? "Sup" : "Dep",

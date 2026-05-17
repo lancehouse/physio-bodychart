@@ -28,17 +28,26 @@ typedef enum {
 /* Quality indices — must match QUALITY_SHORT[] in window.c */
 #define NOTE_QUALITY_COUNT 14
 
+/* Reusable: decouples a text-label position from its anchor spot.
+ * Embed in any annotation that needs a draggable label box.
+ * When placed==0 the renderer applies a default offset from the spot. */
 typedef struct {
-    int    view;
-    double bx, by;          /* body-space position */
-    int    number;          /* sequential 1-10 */
-    int    temporal;        /* 0=Constant, 1=Intermittent */
-    int    depth;           /* 0=Superficial, 1=Deep */
-    int    qualities[3];    /* up to 3 quality indices; see NOTE_QUALITY_COUNT */
-    int    quality_count;   /* 1-3 */
-    int    low_intensity;   /* 0-10, first selected */
-    int    high_intensity;  /* 0-10, second selected */
-    char   text[256];       /* longer text supporting 2+ lines of description */
+    double lx, ly;   /* body-space label position */
+    int    placed;   /* 0=use default offset from spot, 1=user-positioned */
+} LabelAnchor;
+
+typedef struct {
+    int          view;
+    double       bx, by;          /* body-space spot (where user tapped) */
+    int          number;          /* sequential 1-10 */
+    int          temporal;        /* 0=Constant, 1=Intermittent */
+    int          depth;           /* 0=Superficial, 1=Deep */
+    int          qualities[3];    /* up to 3 quality indices; see NOTE_QUALITY_COUNT */
+    int          quality_count;   /* 1-3 */
+    int          low_intensity;   /* 0-10, first selected */
+    int          high_intensity;  /* 0-10, second selected */
+    LabelAnchor  label;           /* draggable text-box position */
+    char         text[256];       /* '\n'-delimited, 2 lines */
 } NoteAnnotation;
 
 typedef struct {

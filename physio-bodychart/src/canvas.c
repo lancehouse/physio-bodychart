@@ -344,6 +344,10 @@ static void screen_to_body(ColData *cd, double sx, double sy,
 }
 
 /* ── Screen-space hit testing for draggable annotations ─────────────────── */
+static void label_anchor_resolve(const NoteAnnotation *na,
+                                  double *out_lbx, double *out_lby);  /* fwd */
+
+/* Returns index of the note whose label box contains (sx, sy), or -1 */
 static int note_hit_screen(AppState *app, ColData *cd, double sx, double sy)
 {
     double w  = (double)gtk_widget_get_width(cd->da);
@@ -354,11 +358,13 @@ static int note_hit_screen(AppState *app, ColData *cd, double sx, double sy)
     for (int i = 0; i < app->note_count; i++) {
         const NoteAnnotation *na = &app->notes[i];
         if (na->view != (int)cd->view) continue;
-        double nsx = (na->bx - 100.0) * s + cx;
-        double nsy = (na->by - 200.0) * s + cy;
-        /* Label box sits above-right of dot; sized for fsz=16.5 labels */
-        if (sx >= nsx - 8  && sx <= nsx + 215 &&
-            sy >= nsy - 40  && sy <= nsy + 8)
+        double lbx, lby;
+        label_anchor_resolve(na, &lbx, &lby);
+        double lsx = (lbx - 100.0) * s + cx;
+        double lsy = (lby - 200.0) * s + cy;
+        /* Approximate label box: bw~180, bh~40, box_ly = lsy - bh */
+        if (sx >= lsx        && sx <= lsx + 180 &&
+            sy >= lsy - 40   && sy <= lsy)
             return i;
     }
     return -1;
@@ -502,46 +508,133 @@ static void draw_link_summary_screen(cairo_t *cr, AppState *app,
 
 /* ── Legend rendering (screen-space, shows zone and point types) ───────── */
 /* ── Note annotation rendering (screen-space, fixed pixel size) ─────────── */
-static void draw_note_screen(cairo_t *cr, const NoteAnnotation *na,
-                              double sx, double sy)
+/* Resolve label position: default offset from spot when not user-placed */
+static void label_anchor_resolve(const NoteAnnotation *na,
+                                  double *out_lbx, double *out_lby)
 {
-    double pad  = 3.0;
-    double fsz  = 16.5;
+    if (na->label.placed) {
+        *out_lbx = na->label.lx;
+        *out_lby = na->label.ly;
+    } else {
+        *out_lbx = na->bx + 12.0;
+        *out_lby = na->by - 8.0;
+    }
+}
+
+/* Draw the connector line + arrowhead from label-box edge to spot.
+ * All coords are screen-space. */
+static void draw_note_connector(cairo_t *cr,
+                                 double spot_sx, double spot_sy,
+                                 double box_lx,  double box_ly,
+                                 double bw,       double bh)
+{
+    /* Connect from spot to the nearest point on the box left edge */
+    double box_cx = box_lx + bw / 2.0;
+    double box_cy = box_ly + bh / 2.0;
+    double dx = spot_sx - box_cx, dy = spot_sy - box_cy;
+    double dist = sqrt(dx * dx + dy * dy);
+    if (dist < 6.0) return;   /* too close — don't draw */
+
+    /* Unit vector from box centre toward spot */
+    double ux = dx / dist, uy = dy / dist;
+
+    /* Start point: edge of label box (approximate: half-diagonal clamp) */
+    double half_diag = sqrt(bw * bw + bh * bh) / 2.0;
+    double start_x = box_cx + ux * half_diag;
+    double start_y = box_cy + uy * half_diag;
+
+    /* End point: just outside spot dot */
+    double end_x = spot_sx - ux * 4.0;
+    double end_y = spot_sy - uy * 4.0;
+
+    cairo_set_source_rgba(cr, 0.2, 0.2, 0.2, 0.70);
+    cairo_set_line_width(cr, 1.0);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_move_to(cr, start_x, start_y);
+    cairo_line_to(cr, end_x, end_y);
+    cairo_stroke(cr);
+
+    /* Small filled arrowhead at the spot end */
+    double head = 6.0;
+    double hw   = 2.5;
+    double px = -uy, py = ux;   /* perpendicular */
+    double hbx = end_x - ux * head, hby = end_y - uy * head;
+    cairo_move_to(cr, end_x, end_y);
+    cairo_line_to(cr, hbx + px * hw, hby + py * hw);
+    cairo_line_to(cr, hbx - px * hw, hby - py * hw);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+}
+
+/* Render one note annotation: spot dot, connector, 2-line label box.
+ * spot_sx/sy and label_sx/sy are screen-space. */
+static void draw_note_screen(cairo_t *cr, const NoteAnnotation *na,
+                              double spot_sx, double spot_sy,
+                              double label_sx, double label_sy)
+{
+    double pad = 4.0;
+    double fsz = 14.0;
 
     cairo_save(cr);
     cairo_select_font_face(cr, "Sans",
                            CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
     cairo_set_font_size(cr, fsz);
 
-    cairo_text_extents_t ext;
-    cairo_text_extents(cr, na->text, &ext);
+    /* Split text on '\n' into up to 2 lines */
+    char line1[128] = {0}, line2[128] = {0};
+    const char *nl = strchr(na->text, '\n');
+    if (nl) {
+        int len1 = (int)(nl - na->text);
+        if (len1 >= (int)sizeof(line1)) len1 = (int)sizeof(line1) - 1;
+        memcpy(line1, na->text, (size_t)len1);
+        snprintf(line2, sizeof(line2), "%s", nl + 1);
+    } else {
+        snprintf(line1, sizeof(line1), "%s", na->text);
+    }
 
-    double bw = ext.width  - ext.x_bearing + 2.0 * pad;
-    double bh = ext.height + 2.0 * pad;
-    double ox = 3.0;          /* offset right of tap point */
-    double oy = -(bh + 3.0); /* float above tap point */
+    cairo_text_extents_t e1, e2;
+    cairo_text_extents(cr, line1, &e1);
+    cairo_text_extents(cr, line2[0] ? line2 : " ", &e2);
 
-    /* Filled box */
+    double line_h = -e1.y_bearing;            /* ascent */
+    double gap    = 2.0;
+    double bw = fmax(e1.width - e1.x_bearing, e2.width - e2.x_bearing) + 2.0 * pad;
+    double bh = (line2[0] ? (line_h * 2.0 + gap) : line_h) + 2.0 * pad;
+
+    /* Label box is drawn with its reference point as its left-baseline */
+    double box_lx = label_sx;
+    double box_ly = label_sy - bh;   /* box above reference */
+
+    /* Connector first (drawn behind label box) */
+    draw_note_connector(cr, spot_sx, spot_sy, box_lx, box_ly, bw, bh);
+
+    /* Filled label box */
     cairo_set_source_rgba(cr, 1.0, 1.0, 0.82, 0.93);
-    cairo_rectangle(cr, sx + ox, sy + oy, bw, bh);
+    cairo_rectangle(cr, box_lx, box_ly, bw, bh);
     cairo_fill(cr);
 
     /* Border */
     cairo_set_source_rgba(cr, 0.25, 0.25, 0.25, 0.85);
     cairo_set_line_width(cr, 0.8);
-    cairo_rectangle(cr, sx + ox, sy + oy, bw, bh);
+    cairo_rectangle(cr, box_lx, box_ly, bw, bh);
     cairo_stroke(cr);
 
-    /* Small dot at tap point */
-    cairo_set_source_rgba(cr, 0.25, 0.25, 0.25, 0.75);
-    cairo_arc(cr, sx, sy, 2.2, 0, 2 * M_PI);
+    /* Spot dot */
+    cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.88);
+    cairo_arc(cr, spot_sx, spot_sy, 3.5, 0, 2 * M_PI);
     cairo_fill(cr);
 
-    /* Text */
+    /* Text lines */
     cairo_set_source_rgba(cr, 0.05, 0.05, 0.05, 1.0);
-    cairo_move_to(cr, sx + ox + pad - ext.x_bearing,
-                      sy + oy + pad - ext.y_bearing);
-    cairo_show_text(cr, na->text);
+    cairo_move_to(cr, box_lx + pad - e1.x_bearing,
+                      box_ly + pad + line_h);
+    cairo_show_text(cr, line1);
+    if (line2[0]) {
+        cairo_move_to(cr, box_lx + pad - e2.x_bearing,
+                          box_ly + pad + line_h * 2.0 + gap);
+        cairo_show_text(cr, line2);
+    }
+
     cairo_restore(cr);
 }
 
@@ -663,9 +756,13 @@ void canvas_render_view(AppState *app, cairo_t *cr, BodyView view,
         for (int i = 0; i < app->note_count; i++) {
             const NoteAnnotation *na = &app->notes[i];
             if (na->view != (int)view) continue;
-            draw_note_screen(cr, na,
-                             (na->bx - 100.0) * s + cx,
-                             (na->by - 200.0) * s + cy);
+            double spot_sx = (na->bx - 100.0) * s + cx;
+            double spot_sy = (na->by - 200.0) * s + cy;
+            double lbx, lby;
+            label_anchor_resolve(na, &lbx, &lby);
+            draw_note_screen(cr, na, spot_sx, spot_sy,
+                             (lbx - 100.0) * s + cx,
+                             (lby - 200.0) * s + cy);
         }
 
         /* Link summary shown in all views */
@@ -814,9 +911,13 @@ static void on_col_draw(GtkDrawingArea *da, cairo_t *cr,
         for (int i = 0; i < app->note_count; i++) {
             const NoteAnnotation *na = &app->notes[i];
             if (na->view != (int)cd->view) continue;
-            draw_note_screen(cr, na,
-                             (na->bx - 100.0) * s + cx,
-                             (na->by - 200.0) * s + cy);
+            double spot_sx = (na->bx - 100.0) * s + cx;
+            double spot_sy = (na->by - 200.0) * s + cy;
+            double lbx, lby;
+            label_anchor_resolve(na, &lbx, &lby);
+            draw_note_screen(cr, na, spot_sx, spot_sy,
+                             (lbx - 100.0) * s + cx,
+                             (lby - 200.0) * s + cy);
         }
         if (app->link_summary_active)
             draw_link_summary_screen(cr, app,
@@ -962,9 +1063,11 @@ static void on_stylus_down(GtkGestureStylus *gs, double x, double y,
         }
         int hit = note_hit_screen(app, cd, x, y);
         if (hit >= 0) {
+            double lbx, lby;
+            label_anchor_resolve(&app->notes[hit], &lbx, &lby);
             app->note_drag_idx    = hit;
-            app->note_drag_bx_off = app->notes[hit].bx - bx;
-            app->note_drag_by_off = app->notes[hit].by - by;
+            app->note_drag_bx_off = lbx - bx;
+            app->note_drag_by_off = lby - by;
             return;
         }
     }
@@ -1073,12 +1176,14 @@ static void on_stylus_motion(GtkGestureStylus *gs, double x, double y,
     AppState *app = cd->app;
     app->last_stylus_us = g_get_monotonic_time();
 
-    /* Note/link drag (any tool) */
+    /* Note label drag / link drag (any tool) */
     if (app->note_drag_idx >= 0) {
         double bx, by;
         screen_to_body(cd, x, y, &bx, &by);
-        app->notes[app->note_drag_idx].bx = bx + app->note_drag_bx_off;
-        app->notes[app->note_drag_idx].by = by + app->note_drag_by_off;
+        NoteAnnotation *na = &app->notes[app->note_drag_idx];
+        na->label.lx     = bx + app->note_drag_bx_off;
+        na->label.ly     = by + app->note_drag_by_off;
+        na->label.placed = 1;
         gtk_widget_queue_draw(cd->da);
         return;
     }
@@ -1208,9 +1313,11 @@ static void on_drag_begin(GtkGestureDrag *gd, double x, double y, gpointer d)
         }
         int hit = note_hit_screen(app, cd, x, y);
         if (hit >= 0) {
+            double lbx, lby;
+            label_anchor_resolve(&app->notes[hit], &lbx, &lby);
             app->note_drag_idx    = hit;
-            app->note_drag_bx_off = app->notes[hit].bx - bx_hit;
-            app->note_drag_by_off = app->notes[hit].by - by_hit;
+            app->note_drag_bx_off = lbx - bx_hit;
+            app->note_drag_by_off = lby - by_hit;
             return;
         }
     }
@@ -1310,10 +1417,12 @@ static void on_drag_update(GtkGestureDrag *gd, double dx, double dy,
     double bx, by;
     screen_to_body(cd, sx + dx, sy + dy, &bx, &by);
 
-    /* Note/link drag (any tool) */
+    /* Note label drag / link drag (any tool) */
     if (app->note_drag_idx >= 0) {
-        app->notes[app->note_drag_idx].bx = bx + app->note_drag_bx_off;
-        app->notes[app->note_drag_idx].by = by + app->note_drag_by_off;
+        NoteAnnotation *na = &app->notes[app->note_drag_idx];
+        na->label.lx     = bx + app->note_drag_bx_off;
+        na->label.ly     = by + app->note_drag_by_off;
+        na->label.placed = 1;
         gtk_widget_queue_draw(cd->da);
         return;
     }

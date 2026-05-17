@@ -101,6 +101,10 @@ static json_object *notes_to_json(AppState *app)
         json_object_object_add(o, "qualities", quals);
         json_object_object_add(o, "low",     json_object_new_int(n->low_intensity));
         json_object_object_add(o, "high",    json_object_new_int(n->high_intensity));
+        if (n->label.placed) {
+            json_object_object_add(o, "lx",     json_object_new_double(n->label.lx));
+            json_object_object_add(o, "ly",     json_object_new_double(n->label.ly));
+        }
         json_object_array_add(arr, o);
     }
     return arr;
@@ -389,7 +393,8 @@ static void regen_note_text(NoteAnnotation *n, const char *const *qs)
     if (n->quality_count == 0)
         strncat(qual_buf, "?", sizeof(qual_buf) - strlen(qual_buf) - 1);
 
-    snprintf(n->text, sizeof(n->text), "(%d)%s %s %s %d-%d/10",
+    /* '\n' splits the two display lines */
+    snprintf(n->text, sizeof(n->text), "(%d)%s %s %s\n%d-%d/10",
              n->number,
              n->temporal == 0 ? "Con" : "Int",
              n->depth    == 0 ? "Sup" : "Dep",
@@ -602,6 +607,15 @@ gboolean persistence_load(AppState *app, const char *path)
             } else {
                 na->low_intensity  = ji(o, "avg",   0);
                 na->high_intensity = ji(o, "worst", 0);
+            }
+            /* Label anchor — absent in old sessions → placed=0 (default offset) */
+            json_object *lx_j;
+            if (json_object_object_get_ex(o, "lx", &lx_j)) {
+                na->label.lx     = jd(o, "lx", na->bx + 12.0);
+                na->label.ly     = jd(o, "ly", na->by - 8.0);
+                na->label.placed = 1;
+            } else {
+                na->label.placed = 0;
             }
             regen_note_text(na, qs);
             app->note_count++;
