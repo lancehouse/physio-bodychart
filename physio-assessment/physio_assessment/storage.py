@@ -1065,8 +1065,26 @@ def export_session_report(session_file: str, clean: bool = False) -> str:  # noq
 
     sub("Symptoms")
     f("body_chart_completed", s)
-    txt("symptom_location",    s)
-    txt("symptom_nature",      s)
+    note_fields = s.get("note_fields") or {}
+    for sid, nf in note_fields.items():
+        if any(nf.get(k, "").strip() for k in ("loc", "nat", "agg", "ease")):
+            _emit(f"**Note {sid}:**  ")
+            if nf.get("loc", "").strip():
+                _emit(f"  Location: {nf['loc'].strip()}  ")
+            if nf.get("nat", "").strip():
+                _emit(f"  Nature: {nf['nat'].strip()}  ")
+            if nf.get("agg", "").strip():
+                _emit(f"  Aggravating: {nf['agg'].strip()}  ")
+            if nf.get("ease", "").strip():
+                _emit(f"  Easing: {nf['ease'].strip()}  ")
+            _emit("")
+    if s.get("misc_loc", "").strip() or s.get("misc_nat", "").strip():
+        _emit("**Misc symptoms (no note):**  ")
+        if s.get("misc_loc", "").strip():
+            _emit(f"  Location: {s['misc_loc'].strip()}  ")
+        if s.get("misc_nat", "").strip():
+            _emit(f"  Nature: {s['misc_nat'].strip()}  ")
+        _emit("")
 
     sub("History")
     txt("onset",              s)
@@ -2268,8 +2286,24 @@ def export_raw_report(session_data: dict, clean: bool = False) -> str:  # noqa: 
 
     sub("Symptoms")
     f("body_chart_completed", s)
-    txt("symptom_location",    s)
-    txt("symptom_nature",      s)
+    note_fields_r = s.get("note_fields") or {}
+    for sid, nf in note_fields_r.items():
+        if any(nf.get(k, "").strip() for k in ("loc", "nat", "agg", "ease")):
+            _emit(f"  Note {sid}:")
+            for key, label in (("loc","Location"),("nat","Nature"),("agg","Aggravating"),("ease","Easing")):
+                val = nf.get(key, "").strip()
+                if val or not clean:
+                    _emit(f"    {label}:")
+                    for row in (val or "(empty)").split("\n"):
+                        _emit(f"      {row}")
+    if s.get("misc_loc","").strip() or s.get("misc_nat","").strip():
+        _emit("  Misc symptoms (no note):")
+        for key, label in (("misc_loc","Location"),("misc_nat","Nature")):
+            val = s.get(key,"").strip()
+            if val or not clean:
+                _emit(f"    {label}:")
+                for row in (val or "(empty)").split("\n"):
+                    _emit(f"      {row}")
 
     sub("History")
     txt("onset",              s)

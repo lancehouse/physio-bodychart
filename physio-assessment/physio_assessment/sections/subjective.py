@@ -1,5 +1,6 @@
 """Subjective Examination section (core/02)."""
 
+import json
 from textual.app import ComposeResult, on
 from textual.containers import Vertical, Horizontal, ScrollableContainer
 from textual.widgets import Label, Input, TextArea, Button
@@ -7,14 +8,11 @@ from textual.message import Message
 
 from .base import BaseSection
 from ..widgets import CheckButton, FlagButton
+from ..mapping import build_prefill
 
+# Must match GTK MAX_NOTES
+MAX_NOTE_SLOTS = 10
 
-# ---------------------------------------------------------------------------
-# SubjectiveSection
-# UI layout:  content scrolled by outer #section_content
-#             subsection nav lives in the top chrome row (SubsectionNavBar)
-# Data logic: collect() and load() are entirely independent of UI structure
-# ---------------------------------------------------------------------------
 
 class SubjectiveSection(BaseSection):
     """Subjective Examination section (core/02).
@@ -25,6 +23,10 @@ class SubjectiveSection(BaseSection):
     - Rearranging the UI never requires touching collect() or load()
 
     Alt+S/H/F/M/A/W/L/B/P/R jump to subsections (active when this tab is showing).
+
+    Per-note slots (note_slot_0 … note_slot_9) are pre-composed and hidden;
+    load() shows the relevant ones and populates them from body-chart prefill +
+    previously saved clinician edits.
     """
 
     DEFAULT_CSS = """
@@ -100,7 +102,45 @@ class SubjectiveSection(BaseSection):
     .solo_btn {
         margin: 0 0 0 0;
     }
+
+    /* Per-note slots */
+    .note_slot {
+        width: 100%;
+        height: auto;
+        border-left: thick $primary-darken-2;
+        padding-left: 1;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+
+    .note_header {
+        text-style: bold;
+        color: $secondary;
+        padding-top: 0;
+        margin-bottom: 0;
+    }
+
+    .misc_header {
+        text-style: bold italic;
+        color: $text-muted;
+        padding-top: 0;
+        margin-bottom: 0;
+    }
+
+    #no_notes_msg {
+        color: $text-muted;
+        padding: 0 0 1 0;
+    }
     """
+
+    # ------------------------------------------------------------------
+    # Init
+    # ------------------------------------------------------------------
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Maps slot index → stable_id; populated by _rebuild_note_slots()
+        self._slot_to_stable_id: dict[int, int] = {}
 
     # ------------------------------------------------------------------
     # UI
@@ -110,15 +150,42 @@ class SubjectiveSection(BaseSection):
         with Vertical(id="subj_content"):
             yield Label("Subjective Examination", classes="section_title")
 
-            # ── Symptoms ──────────────────────────────────────────────
-            yield Label("— Symptoms —", classes="subsection_header", id="subj_symptoms")
-            yield CheckButton("Body chart completed", id="body_chart_completed", classes="solo_btn")
-            with Horizontal(classes="field_row"):
-                yield Label("Location\n& distribution:")
-                yield TextArea(id="symptom_location", language="plain")
-            with Horizontal(classes="field_row"):
-                yield Label("Nature of symptoms\n(quality / type):")
-                yield TextArea(id="symptom_nature", language="plain")
+            # ── Body Chart Symptoms (dynamic per-note) ─────────────────
+            yield Label("— Body Chart Symptoms —", classes="subsection_header",
+                        id="subj_symptoms")
+            yield CheckButton("Body chart completed", id="body_chart_completed",
+                              classes="solo_btn")
+
+            # Pre-compose all note slots; on_mount() hides them all.
+            # load() reveals and populates only those matching the body chart.
+            for i in range(MAX_NOTE_SLOTS):
+                with Vertical(id=f"note_slot_{i}", classes="note_slot"):
+                    yield Label("", id=f"note_label_{i}", classes="note_header")
+                    with Horizontal(classes="field_row"):
+                        yield Label("Location &\ndistribution:")
+                        yield TextArea(id=f"note_{i}_loc", language="plain")
+                    with Horizontal(classes="field_row"):
+                        yield Label("Nature of\nsymptoms:")
+                        yield TextArea(id=f"note_{i}_nat", language="plain")
+                    with Horizontal(classes="field_row"):
+                        yield Label("Aggravating\nfactors:")
+                        yield TextArea(id=f"note_{i}_agg", language="plain")
+                    with Horizontal(classes="field_row"):
+                        yield Label("Easing\nfactors:")
+                        yield TextArea(id=f"note_{i}_ease", language="plain")
+
+            # Misc slot — clusters with no nearby note
+            with Vertical(id="misc_slot", classes="note_slot"):
+                yield Label("Misc symptoms (body chart — no note placed)",
+                            classes="misc_header")
+                with Horizontal(classes="field_row"):
+                    yield Label("Location &\ndistribution:")
+                    yield TextArea(id="misc_loc", language="plain")
+                with Horizontal(classes="field_row"):
+                    yield Label("Nature:")
+                    yield TextArea(id="misc_nat", language="plain")
+
+            yield Label("(No body chart notes placed)", id="no_notes_msg")
 
             # ── History ───────────────────────────────────────────────
             yield Label("— History —", classes="subsection_header", id="subj_history")
@@ -162,7 +229,8 @@ class SubjectiveSection(BaseSection):
                 yield TextArea(id="flareup_duration", language="plain")
 
             # ── Self-Management ───────────────────────────────────────
-            yield Label("— Self-Management & Control —", classes="subsection_header", id="subj_management")
+            yield Label("— Self-Management & Control —", classes="subsection_header",
+                        id="subj_management")
             with Horizontal(classes="field_row"):
                 yield Label("Perceived control\nover pain (0–10):")
                 yield Input(id="pain_control_score", placeholder="0–10")
@@ -177,7 +245,8 @@ class SubjectiveSection(BaseSection):
                 yield Input(id="confidence_score", placeholder="0–10")
 
             # ── Activity & Exercise ───────────────────────────────────
-            yield Label("— Activity & Exercise —", classes="subsection_header", id="subj_activity")
+            yield Label("— Activity & Exercise —", classes="subsection_header",
+                        id="subj_activity")
             with Horizontal(classes="field_row"):
                 yield Label("Pre-injury\nactivity level:")
                 yield TextArea(id="pre_activity_level", language="plain")
@@ -263,20 +332,23 @@ class SubjectiveSection(BaseSection):
                 yield TextArea(id="energy_levels", language="plain")
 
             # ── Behaviour ─────────────────────────────────────────────
-            yield Label("— Behaviour of Symptoms —", classes="subsection_header", id="subj_behaviour")
+            yield Label("— Behaviour of Symptoms —", classes="subsection_header",
+                        id="subj_behaviour")
             with Horizontal(classes="field_row"):
-                yield Label("Aggravating factors:")
+                yield Label("Aggravating factors\n(general):")
                 yield TextArea(id="aggravating_factors", language="plain")
             with Horizontal(classes="field_row"):
-                yield Label("Easing factors:")
+                yield Label("Easing factors\n(general):")
                 yield TextArea(id="easing_factors", language="plain")
-            yield CheckButton("Mood influences pain", id="mood_influences", classes="solo_btn")
+            yield CheckButton("Mood influences pain", id="mood_influences",
+                              classes="solo_btn")
             with Horizontal(classes="field_row"):
                 yield Label("Daily pattern\ncomments:")
                 yield TextArea(id="daily_pattern_comments", language="plain")
 
             # ── Psychosocial ──────────────────────────────────────────
-            yield Label("— Psychosocial —", classes="subsection_header", id="subj_psychosocial")
+            yield Label("— Psychosocial —", classes="subsection_header",
+                        id="subj_psychosocial")
             with Horizontal(classes="field_row"):
                 yield Label("Social situation\n(home / family):")
                 yield TextArea(id="social_situation", language="plain")
@@ -294,8 +366,10 @@ class SubjectiveSection(BaseSection):
                 yield TextArea(id="screening_tool", language="plain")
 
             # ── Suicide / Self-Harm Risk ──────────────────────────────
-            yield Label("— Suicide / Self-Harm Risk —", classes="subsection_header", id="subj_suicide")
-            yield FlagButton("Thoughts of self-harm or suicide", id="self_harm_risk", classes="solo_btn")
+            yield Label("— Suicide / Self-Harm Risk —", classes="subsection_header",
+                        id="subj_suicide")
+            yield FlagButton("Thoughts of self-harm or suicide", id="self_harm_risk",
+                             classes="solo_btn")
             with Horizontal(classes="field_row"):
                 yield Label("Plan (if yes):")
                 yield TextArea(id="harm_plan", language="plain")
@@ -309,17 +383,86 @@ class SubjectiveSection(BaseSection):
                 yield Label("Action taken\n(if yes):")
                 yield TextArea(id="harm_action", language="plain")
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def on_mount(self) -> None:
+        """Hide all note slots until load() is called with session data."""
+        for i in range(MAX_NOTE_SLOTS):
+            self.query_one(f"#note_slot_{i}").display = False
+        self.query_one("#misc_slot").display = False
+
+    # ------------------------------------------------------------------
+    # Per-note slot management
+    # ------------------------------------------------------------------
+
+    def _rebuild_note_slots(self, saved_note_fields: dict, prefill: dict) -> None:
+        """Show and populate note slots matching the current body chart state.
+
+        saved_note_fields: data["note_fields"] from _assessment.json (clinician edits)
+        prefill:           output of build_prefill() from the session JSON
+        """
+        # Reset all slots to hidden
+        for i in range(MAX_NOTE_SLOTS):
+            self.query_one(f"#note_slot_{i}").display = False
+        self.query_one("#misc_slot").display = False
+        self._slot_to_stable_id.clear()
+
+        notes = prefill.get("notes", [])
+
+        for i, note in enumerate(notes[:MAX_NOTE_SLOTS]):
+            sid   = note["stable_id"]
+            num   = note["number"]
+            saved = saved_note_fields.get(str(sid), {})
+
+            self._slot_to_stable_id[i] = sid
+
+            slot = self.query_one(f"#note_slot_{i}")
+            slot.display = True
+
+            region = note["location_distribution"] or f"Note {num}"
+            self.query_one(f"#note_label_{i}", Label).update(
+                f"Note {num} — {region}"
+            )
+
+            # Saved clinician text takes priority; fall back to body-chart prefill
+            loc  = saved.get("loc")  or note["location_distribution"]
+            nat  = saved.get("nat")  or note["nature"]
+            agg  = saved.get("agg",  "")
+            ease = saved.get("ease", "")
+
+            self.query_one(f"#note_{i}_loc", TextArea).text = loc
+            self.query_one(f"#note_{i}_nat", TextArea).text = nat
+            self.query_one(f"#note_{i}_agg", TextArea).text = agg
+            self.query_one(f"#note_{i}_ease", TextArea).text = ease
+
+        # Misc slot
+        misc      = prefill.get("misc", {})
+        misc_loc  = saved_note_fields.get("misc_loc") or misc.get("location_distribution", "")
+        misc_nat  = saved_note_fields.get("misc_nat") or misc.get("nature", "")
+
+        if misc_loc or misc_nat:
+            self.query_one("#misc_slot").display = True
+            self.query_one("#misc_loc", TextArea).text = misc_loc
+            self.query_one("#misc_nat", TextArea).text = misc_nat
+
+        has_content = bool(notes) or bool(misc_loc or misc_nat)
+        self.query_one("#no_notes_msg").display = not has_content
+
+    # ------------------------------------------------------------------
+    # Navigation
+    # ------------------------------------------------------------------
+
     def _jump_to(self, anchor_id: str) -> None:
-        """Scroll to subsection header and focus its first interactive widget."""
         try:
             target = self.query_one(f"#{anchor_id}")
             self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(
                 target, top=True
             )
-            # Focus the first interactive widget that follows the anchor in the DOM
             all_interactive = list(self.query("Input, TextArea, CheckButton, Button"))
-            all_nodes = list(self.query("*"))
-            anchor_idx = all_nodes.index(target)
+            all_nodes       = list(self.query("*"))
+            anchor_idx      = all_nodes.index(target)
             for widget in all_interactive:
                 if all_nodes.index(widget) > anchor_idx:
                     widget.focus()
@@ -343,7 +486,6 @@ class SubjectiveSection(BaseSection):
     ]
 
     _TEXT_FIELDS = [
-        "symptom_location", "symptom_nature",
         "onset", "duration", "context_at_onset", "previous_episodes", "previous_treatment",
         "flareup_triggers", "flareup_predictability", "flareup_duration",
         "flareup_prevention", "management_strategies",
@@ -369,45 +511,93 @@ class SubjectiveSection(BaseSection):
 
     def collect(self) -> dict:
         data = {}
+
         for fid in self._TOGGLE_FIELDS:
             try:
                 data[fid] = self.query_one(f"#{fid}", CheckButton).value
             except Exception:
                 data[fid] = None
+
+        # Per-note fields — keyed by stable_id (str) for JSON serialisation
+        note_fields: dict[str, dict] = {}
+        for i, sid in self._slot_to_stable_id.items():
+            try:
+                if not self.query_one(f"#note_slot_{i}").display:
+                    continue
+                note_fields[str(sid)] = {
+                    "loc":  self.query_one(f"#note_{i}_loc",  TextArea).text,
+                    "nat":  self.query_one(f"#note_{i}_nat",  TextArea).text,
+                    "agg":  self.query_one(f"#note_{i}_agg",  TextArea).text,
+                    "ease": self.query_one(f"#note_{i}_ease", TextArea).text,
+                }
+            except Exception:
+                pass
+        data["note_fields"] = note_fields
+
+        try:
+            misc_visible = self.query_one("#misc_slot").display
+            data["misc_loc"] = self.query_one("#misc_loc", TextArea).text if misc_visible else ""
+            data["misc_nat"] = self.query_one("#misc_nat", TextArea).text if misc_visible else ""
+        except Exception:
+            data["misc_loc"] = ""
+            data["misc_nat"] = ""
+
         for fid in self._TEXT_FIELDS:
             try:
                 data[fid] = self.query_one(f"#{fid}", TextArea).text
             except Exception:
                 data[fid] = ""
+
         for fid in self._INPUT_FIELDS:
             try:
                 data[fid] = self.query_one(f"#{fid}", Input).value
             except Exception:
                 data[fid] = ""
+
         return data
 
     def load(self, data: dict) -> None:
         self._loading = True
         try:
             subjective = data if isinstance(data, dict) else {}
+
+            # Build prefill from body chart session JSON
+            prefill: dict = {}
+            if self.session_file:
+                try:
+                    session_json = json.loads(
+                        open(self.session_file, encoding="utf-8").read()
+                    )
+                    prefill = build_prefill(session_json)
+                except Exception:
+                    pass
+
+            self._rebuild_note_slots(
+                subjective.get("note_fields", {}),
+                prefill,
+            )
+
             for fid in self._TOGGLE_FIELDS:
                 if fid in subjective:
                     try:
                         self.query_one(f"#{fid}", CheckButton).set_value(subjective[fid])
                     except Exception:
                         pass
+
             for fid in self._TEXT_FIELDS:
                 if fid in subjective:
                     try:
                         self.query_one(f"#{fid}", TextArea).text = subjective[fid]
                     except Exception:
                         pass
+
             for fid in self._INPUT_FIELDS:
                 if fid in subjective:
                     try:
                         self.query_one(f"#{fid}", Input).value = subjective[fid]
                     except Exception:
                         pass
+
         finally:
             self._loading = False
 
