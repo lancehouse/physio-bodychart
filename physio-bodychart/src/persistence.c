@@ -393,13 +393,13 @@ static void regen_note_text(NoteAnnotation *n, const char *const *qs)
     if (n->quality_count == 0)
         strncat(qual_buf, "?", sizeof(qual_buf) - strlen(qual_buf) - 1);
 
-    /* '\n' splits the two display lines */
-    snprintf(n->text, sizeof(n->text), "(%d)%s %s %s\n%d-%d/10",
+    /* Line 1: number + temporal + depth + intensity; line 2: quality words */
+    snprintf(n->text, sizeof(n->text), "(%d)%s %s %d-%d/10\n%s",
              n->number,
              n->temporal == 0 ? "Con" : "Int",
              n->depth    == 0 ? "Sup" : "Dep",
-             qual_buf,
-             n->low_intensity, n->high_intensity);
+             n->low_intensity, n->high_intensity,
+             qual_buf);
 }
 
 /* ── Load ─────────────────────────────────────────────────────────────────── */

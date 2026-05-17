@@ -528,37 +528,42 @@ static void draw_note_connector(cairo_t *cr,
                                  double box_lx,  double box_ly,
                                  double bw,       double bh)
 {
-    /* Connect from spot to the nearest point on the box left edge */
     double box_cx = box_lx + bw / 2.0;
     double box_cy = box_ly + bh / 2.0;
     double dx = spot_sx - box_cx, dy = spot_sy - box_cy;
     double dist = sqrt(dx * dx + dy * dy);
-    if (dist < 6.0) return;   /* too close — don't draw */
+    if (dist < 8.0) return;
 
     /* Unit vector from box centre toward spot */
     double ux = dx / dist, uy = dy / dist;
 
-    /* Start point: edge of label box (approximate: half-diagonal clamp) */
-    double half_diag = sqrt(bw * bw + bh * bh) / 2.0;
-    double start_x = box_cx + ux * half_diag;
-    double start_y = box_cy + uy * half_diag;
+    /* Exact intersection of the ray with the rectangle boundary */
+    double tx = (ux != 0.0) ? (bw / 2.0) / fabs(ux) : 1e9;
+    double ty = (uy != 0.0) ? (bh / 2.0) / fabs(uy) : 1e9;
+    double t  = fmin(tx, ty);
+    double start_x = box_cx + ux * t;
+    double start_y = box_cy + uy * t;
 
-    /* End point: just outside spot dot */
-    double end_x = spot_sx - ux * 4.0;
-    double end_y = spot_sy - uy * 4.0;
+    /* Arrowhead tip lands at the spot dot edge */
+    double spot_r = 5.5;
+    double end_x  = spot_sx - ux * spot_r;
+    double end_y  = spot_sy - uy * spot_r;
 
-    cairo_set_source_rgba(cr, 0.2, 0.2, 0.2, 0.70);
-    cairo_set_line_width(cr, 1.0);
+    double head = 12.0;
+    double hw   = 5.0;
+    double px   = -uy, py = ux;
+    double hbx  = end_x - ux * head;
+    double hby  = end_y - uy * head;
+
+    /* Shaft */
+    cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.85);
+    cairo_set_line_width(cr, 2.0);
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
     cairo_move_to(cr, start_x, start_y);
-    cairo_line_to(cr, end_x, end_y);
+    cairo_line_to(cr, hbx, hby);   /* stop at head base so it doesn't show behind head */
     cairo_stroke(cr);
 
-    /* Small filled arrowhead at the spot end */
-    double head = 6.0;
-    double hw   = 2.5;
-    double px = -uy, py = ux;   /* perpendicular */
-    double hbx = end_x - ux * head, hby = end_y - uy * head;
+    /* Filled arrowhead */
     cairo_move_to(cr, end_x, end_y);
     cairo_line_to(cr, hbx + px * hw, hby + py * hw);
     cairo_line_to(cr, hbx - px * hw, hby - py * hw);
@@ -619,9 +624,12 @@ static void draw_note_screen(cairo_t *cr, const NoteAnnotation *na,
     cairo_rectangle(cr, box_lx, box_ly, bw, bh);
     cairo_stroke(cr);
 
-    /* Spot dot */
-    cairo_set_source_rgba(cr, 0.15, 0.15, 0.15, 0.88);
-    cairo_arc(cr, spot_sx, spot_sy, 3.5, 0, 2 * M_PI);
+    /* Spot dot — filled circle with white ring so it reads on any background */
+    cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.90);
+    cairo_arc(cr, spot_sx, spot_sy, 7.0, 0, 2 * M_PI);
+    cairo_fill(cr);
+    cairo_set_source_rgba(cr, 0.12, 0.12, 0.12, 0.92);
+    cairo_arc(cr, spot_sx, spot_sy, 5.5, 0, 2 * M_PI);
     cairo_fill(cr);
 
     /* Text lines */

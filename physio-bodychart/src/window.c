@@ -883,12 +883,13 @@ static void wizard_commit(WizardData *wd)
         }
         if (na->quality_count == 0)
             strncat(qual_buf, "?", sizeof(qual_buf) - strlen(qual_buf) - 1);
-        snprintf(na->text, sizeof(na->text), "(%d)%s %s %s\n%d-%d/10",
+        /* Line 1: number + temporal + depth + intensity; line 2: quality words */
+        snprintf(na->text, sizeof(na->text), "(%d)%s %s %d-%d/10\n%s",
                  na->number,
                  na->temporal == 0 ? "Con" : "Int",
                  na->depth    == 0 ? "Sup" : "Dep",
-                 qual_buf,
-                 na->low_intensity, na->high_intensity);
+                 na->low_intensity, na->high_intensity,
+                 qual_buf);
         app->note_count++;
     }
     canvas_invalidate(app);
