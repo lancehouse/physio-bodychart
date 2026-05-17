@@ -622,3 +622,153 @@ Knowledge base is clinician-owned. clinical_kb.db
 content is authored by the clinician over time. Seed 
 with correct schema and minimal correct content. 
 Accuracy matters more than completeness at every stage.
+
+
+
+=====================
+New intro text for integration between GTK and TUI apps, starting code instructions:
+    
+I am working on a physiotherapy clinical tool with two integrated apps:
+
+- GTK4/C body chart app (physio-bodychart) — owns _session.json
+- Python/Textual TUI assessment form (physio-assessment) — owns _assessment.json and _objective.json
+
+The TUI already watches _session.json via watcher.py. We are now implementing Phase 1 of GTK→TUI integration: GTK Notes driving TUI Section 02 (Subjective Examination) auto-population.
+
+Please read both CLAUDE.md files before doing anything:
+- /home/lance/Projects/physio-bodychart/CLAUDE.md (top-level architecture)
+- /home/lance/Projects/physio-bodychart/physio-bodychart/CLAUDE.md (GTK app specifics)
+- /home/lance/Projects/physio-bodychart/physio-assessment/CLAUDE.md (TUI app specifics)
+
+Then read the current source files relevant to this task before writing any code:
+- physio-bodychart/src/canvas.c and canvas.h (stroke and note rendering)
+- physio-bodychart/src/persistence.c (session JSON read/write)
+- physio-assessment/physio_assessment/sections/subjective.py (section 02 current structure)
+- physio-assessment/physio_assessment/watcher.py (file watcher)
+- physio-assessment/physio_assessment/storage.py (JSON I/O)
+
+Do not write any code until you have read all of the above and summarised your understanding back to me.
+
+---
+
+CONTEXT: WHAT WAS JUST COMPLETED
+
+The GTK Note widget has been reworked and is complete. Do not re-architect it. Notes now contain:
+- Location dot (coordinates on canvas)
+- Constant / Intermittent
+- Deep / Superficial
+- Average severity (NRS 0-10)
+- Worst severity (NRS 0-10)
+- Descriptors — multi-select from fixed vocab (ache, sharp, burning, P+N, numbness, paraesthesia etc.)
+  Descriptors field displays last in the Note UI for visual formatting reasons.
+
+---
+
+INTEGRATION GOAL
+
+When a clinician places a Note on the body chart and draws symptom strokes around it, TUI section 02 should automatically receive pre-populated but editable text for each Note.
+
+For each Note (1..N), the TUI receives:
+- Location and Distribution (N) — e.g. "R posterior shoulder tracking R posterior arm, R lateral arm, R hand"
+- Nature of Symptoms (N) — e.g. "Ache, P+N — 3-9/10, Intermittent, Superficial"
+- Aggravating Factors (N) — pre-labelled free text field, label reads e.g. "Aggs (1) R posterior shoulder:"
+- Easing Factors (N) — pre-labelled free text field, label reads e.g. "Eases (1) R posterior shoulder:"
+
+Plus one always-visible catch-all:
+- Location and Distribution (misc) — for strokes not spatially associated with any Note
+
+The clinician edits these fields in the TUI after auto-population. GTK generates the draft only.
+
+---
+
+BUILD SEQUENCE — work through these in order, confirming with me at each step before proceeding to the next.
+
+STEP 1 — STROKE ID AUDIT
+Determine whether strokes in subjective.strokes in _session.json currently have stable IDs.
+If not, add them. Notes will reference stroke IDs to record spatial associations.
+Report what you find before touching anything.
+
+STEP 2 — SVG LAYER PARSER IN GTK
+Build a parser in GTK that:
+- Reads named layers from an SVG overlay file (look for inkscape:label or id attributes on <g> layer elements)
+- Loads layer geometry (paths/shapes) for later overlap computation
+- Is not coupled to any specific SVG filename — path must be a named configurable constant
+- Does not yet perform any overlap computation — parser only at this step
+
+The SVG body-region file is being built concurrently and will be placed in the project before Step 3 begins. Build the parser so it works with any SVG following this layer naming convention: "R posterior shoulder", "L lumbar", "R hand" etc. — plain descriptive strings, side-prefixed.
+
+STEP 3 — SPATIAL ASSOCIATION AT NOTE PLACEMENT
+When a Note is placed, moved, or when a stroke is committed:
+- Compute which SVG body region layer contains the Note's location dot → region_label
+- Compute which SVG layers are covered by strokes associated with this Note → distribution_labels (ordered proximal to distal where determinable)
+- Assign each stroke to the nearest Note within a spatial threshold. The threshold must be a named tunable constant, not a magic number. Suggest starting at 15% of canvas width. Strokes outside threshold of all Notes go to a misc bucket.
+
+Recompute association: on Note placement, on Note move, on stroke commit, and on save.
+
+STEP 4 — SCHEMA EXTENSION IN _session.json
+Write Note semantic data to _session.json so the TUI can consume it without doing any geometric computation. The following structure is suggested but not mandatory — adapt to fit cleanly with the existing schema and whatever stroke ID approach was determined in Step 1:
+
+{
+  "notes": [
+    {
+      "id": 1,
+      "coords": [x, y],
+      "timing": "Intermittent",
+      "depth": "Superficial",
+      "severity_avg": 3,
+      "severity_worst": 9,
+      "descriptors": ["Ache", "P+N"],
+      "region_label": "R posterior shoulder",
+      "distribution_labels": [
+        "R posterior shoulder",
+        "R posterior arm",
+        "R lateral arm",
+        "R hand"
+      ],
+      "associated_stroke_ids": [0, 2, 5]
+    }
+  ],
+  "misc_stroke_ids": [3, 7]
+}
+
+The critical requirement: the TUI must be able to read each Note's timing, depth, severity, descriptors, region label, and distribution from _session.json without any geometric computation on the TUI side.
+
+STEP 5 — TUI mapping.py (new file)
+Create physio_assessment/mapping.py. This file:
+- Reads the notes array from _session.json
+- Generates auto-population strings for section 02 fields
+- Has no Textual imports — pure data transformation only
+
+Starting point for string generation (adjust for clinical readability once real data is available):
+
+  location = f"{note['region_label']} tracking {', '.join(note['distribution_labels'][1:])}"
+  nature = f"{', '.join(note['descriptors'])} — {note['severity_avg']}-{note['severity_worst']}/10, {note['timing']}, {note['depth']}"
+  aggs_label = f"Aggs ({note['id']}) {note['region_label']}:"
+  eases_label = f"Eases ({note['id']}) {note['region_label']}:"
+
+STEP 6 — TUI SECTION 02 RESTRUCTURE
+Restructure physio_assessment/sections/subjective.py:
+
+- this may need completing earlier in the build depending on requiremetns.    
+- 4 fixed sets of fields (3 numbered + 1 misc catch-all)
+- Set 1 always visible. Sets 2, 3, 4 revealed progressively when the previous set's Location field is non-empty
+- Each numbered set contains: Location/Distribution (TextArea, auto-populated), Nature of Symptoms (TextArea, auto-populated), Aggravating Factors (label + free text), Easing Factors (label + free text)
+- Misc set always visible: Location/Distribution misc (TextArea)
+- Auto-population fires via watcher when _session.json changes
+- Auto-populated fields are fully editable by the clinician
+- Never overwrite a field the clinician has manually edited. Track this by comparing current field content against a shadow copy of the last auto-populated value. If they differ, the clinician has edited — do not overwrite.
+- All existing section 02 fields not mentioned here are preserved unchanged
+
+---
+
+HARD CONSTRAINTS (from project CLAUDE.md files — non-negotiable)
+
+- GTK never writes _assessment.json or _objective.json
+- TUI never writes _session.json
+- Atomic writes (temp file + rename) on every JSON write
+- Human-readable JSON always — no binary formats, no SQLite for session data
+- Auto-save on every field change, 1.5s debounce
+- _loading flag must guard all widget assignments in TUI load() methods
+- collect() must be the exact mirror of load() — same fields, same keys, no omissions
+- Button width <= 25% of available width in all TUI widgets
+- Flag any ambiguous clinical term before interpreting or inventing content — do not guess

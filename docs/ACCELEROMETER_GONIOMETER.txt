@@ -1,0 +1,480 @@
+════════════════════════════════════════════════════════════
+PHYSIOCHART — ACCELEROMETER GONIOMETER COMPONENT
+Saved: May 2026
+Status: PLANNED — not yet implemented
+Implement after objective section fields are stable
+════════════════════════════════════════════════════════════
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HARDWARE CONFIRMED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Device: Lenovo Yoga (model: ThinkPad 11e or similar)
+Sensor: accel_3d (HID sensor hub accelerometer)
+Driver: hid_sensor_accel_3d (confirmed loaded via lsmod)
+IIO path: /sys/bus/iio/devices/iio:device0/
+Kernel modules confirmed active:
+  industrialio
+  industrialio_triggered_buffer
+  hid_sensor_trigger
+  hid_sensor_accel_3d
+  kfifo_buf
+
+Files to read:
+  /sys/bus/iio/devices/iio:device0/in_accel_x_raw
+  /sys/bus/iio/devices/iio:device0/in_accel_y_raw
+  /sys/bus/iio/devices/iio:device0/in_accel_z_raw
+  /sys/bus/iio/devices/iio:device0/in_accel_scale
+
+NOTE: Raw values are noisy (±50 counts at rest).
+This is normal. Smoothing is required before display.
+See filtering section below.
+
+AXIS ORIENTATION: Not yet determined for this device.
+Must run the axis test (see below) before implementing
+the angle formula to confirm which axis = which plane.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AXIS ORIENTATION TEST — RUN THIS FIRST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run this Python script in 4 positions to determine
+axis mapping for this specific device. Each run takes
+~1 second. Note results for each position.
+
+python3 -c "
+import time, math
+dev = '/sys/bus/iio/devices/iio:device0'
+
+def read(axis):
+    with open(f'{dev}/in_accel_{axis}_raw') as f:
+        return float(f.read().strip())
+
+samples = 20
+print('Taking 20 readings, hold still...')
+xs, ys, zs = [], [], []
+for i in range(samples):
+    xs.append(read('x'))
+    ys.append(read('y'))
+    zs.append(read('z'))
+    time.sleep(0.05)
+
+x = sum(xs)/samples
+y = sum(ys)/samples
+z = sum(zs)/samples
+print(f'X avg: {x:.1f}')
+print(f'Y avg: {y:.1f}')
+print(f'Z avg: {z:.1f}')
+print(f'Angle (sagittal): {math.atan2(math.sqrt(x*x+z*z),y)*180/math.pi:.1f} deg')
+print(f'Angle (frontal):  {math.atan2(math.sqrt(y*y+z*z),x)*180/math.pi:.1f} deg')
+"
+
+TEST POSITIONS:
+  Position 1: Flat on table, screen facing up (baseline)
+  Position 2: Hold vertically like a book, portrait mode
+               (simulates holding against patient spine)
+  Position 3: Tilt top of screen toward you, forward
+               (simulates lumbar flexion measurement)
+  Position 4: Tilt left edge down, lateral
+               (simulates lateral flexion measurement)
+
+Record X/Y/Z averages for each position.
+The axis that changes most between positions 1 and 3
+= sagittal axis (flexion/extension).
+The axis that changes most between positions 1 and 4
+= frontal axis (side flexion/abduction).
+Update the formula in the implementation section
+with the correct axis mapping before building.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CLINICAL WORKFLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Clinician in TUI objective section, ROM subsection
+2. Taps [📐] button next to target field
+   e.g. "Lumbar flexion range"
+3. TUI writes to session JSON:
+     "pending_measurement": "lx_rom_flex_range"
+4. GTK body chart comes to foreground automatically
+5. GTK detects pending_measurement flag
+6. Inclinometer measurement screen opens (modal)
+7. Patient bends forward
+8. Clinician holds Lenovo against patient's spine
+9. Screen shows live angle, updating smoothly
+10. Clinician taps Zero at neutral position
+11. Patient moves to end range
+12. Clinician holds still until stability bar fills (~1 sec)
+13. Taps Capture
+14. Angle (end range minus zero reference) written to:
+      session JSON field: "lx_rom_flex_range" = "65"
+      pending_measurement cleared to null
+15. GTK closes measurement screen
+16. Clinician switches back to TUI (Ctrl+A)
+17. TUI detects new value, field shows "65°"
+
+Measurement planes supported:
+  Sagittal: lumbar flexion, extension, SLR estimation,
+            cervical flexion, hip flexion
+  Frontal:  lumbar side flexion, hip abduction,
+            cervical side flexion
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOISE FILTERING — REQUIRED BEFORE DISPLAY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Raw values jump ±50 counts at rest. This is normal
+HID sensor behaviour. Rolling average of 20 samples
+at 20Hz gives clinically acceptable stability (±0.5°)
+with ~1 second settling time. Do not display raw values.
+
+C implementation — rolling average ring buffer:
+
+#define ACCEL_SAMPLES 20
+#define ACCEL_DEVICE "/sys/bus/iio/devices/iio:device0"
+
+static double x_buf[ACCEL_SAMPLES];
+static double y_buf[ACCEL_SAMPLES];
+static double z_buf[ACCEL_SAMPLES];
+static int buf_idx = 0;
+static int buf_filled = 0;
+static double accel_scale = 1.0;  /* read once at startup */
+
+static double read_accel_axis_raw(const char *axis) {
+    char path[256];
+    snprintf(path, sizeof(path),
+        ACCEL_DEVICE "/in_accel_%s_raw", axis);
+    FILE *f = fopen(path, "r");
+    if (!f) return 0.0;
+    double val;
+    fscanf(f, "%lf", &val);
+    fclose(f);
+    return val * accel_scale;
+}
+
+static void accel_read_scale(void) {
+    FILE *f = fopen(ACCEL_DEVICE "/in_accel_scale", "r");
+    if (!f) return;
+    fscanf(f, "%lf", &accel_scale);
+    fclose(f);
+}
+
+static double smoothed_angle_sagittal(void) {
+    x_buf[buf_idx] = read_accel_axis_raw("x");
+    y_buf[buf_idx] = read_accel_axis_raw("y");
+    z_buf[buf_idx] = read_accel_axis_raw("z");
+    buf_idx = (buf_idx + 1) % ACCEL_SAMPLES;
+    if (buf_filled < ACCEL_SAMPLES) buf_filled++;
+
+    double ax = 0, ay = 0, az = 0;
+    for (int i = 0; i < buf_filled; i++) {
+        ax += x_buf[i];
+        ay += y_buf[i];
+        az += z_buf[i];
+    }
+    ax /= buf_filled;
+    ay /= buf_filled;
+    az /= buf_filled;
+
+    /* NOTE: axis mapping below is a placeholder.
+       Run the axis orientation test and update
+       the formula with correct axis assignment
+       for this specific device before building. */
+    return atan2(sqrt(ax*ax + az*az), ay)
+           * 180.0 / G_PI;
+}
+
+static double smoothed_angle_frontal(void) {
+    /* Same buffer — call sagittal first each tick
+       to populate buffer, then call this for the
+       alternate plane calculation */
+    double ax = 0, ay = 0, az = 0;
+    for (int i = 0; i < buf_filled; i++) {
+        ax += x_buf[i];
+        ay += y_buf[i];
+        az += z_buf[i];
+    }
+    ax /= buf_filled;
+    ay /= buf_filled;
+    az /= buf_filled;
+
+    /* NOTE: update axis mapping after orientation test */
+    return atan2(sqrt(ay*ay + az*az), ax)
+           * 180.0 / G_PI;
+}
+
+Polling timer — call at 20Hz (every 50ms):
+
+static gboolean accel_poll_cb(gpointer user_data) {
+    InclinometerState *state = user_data;
+    double angle;
+
+    if (state->plane == PLANE_SAGITTAL)
+        angle = smoothed_angle_sagittal();
+    else
+        angle = smoothed_angle_frontal();
+
+    /* Angle relative to zero reference */
+    double relative = angle - state->zero_reference;
+
+    /* Update stability indicator */
+    state->stability = compute_stability();
+
+    /* Update display */
+    char label[32];
+    snprintf(label, sizeof(label), "%.1f°",
+             fabs(relative));
+    gtk_label_set_text(state->angle_label, label);
+    update_stability_bar(state);
+
+    return G_SOURCE_CONTINUE;
+}
+
+Stability calculation — standard deviation of
+last 10 readings. Capture is reliable when StdDev < 1°:
+
+static double compute_stability(void) {
+    int n = MIN(buf_filled, 10);
+    if (n < 2) return 99.0;
+    double sum = 0, sum_sq = 0;
+    for (int i = 0; i < n; i++) {
+        /* use whichever axis is primary for current plane */
+        double v = y_buf[(buf_idx - 1 - i +
+                          ACCEL_SAMPLES) % ACCEL_SAMPLES];
+        sum += v;
+        sum_sq += v * v;
+    }
+    double mean = sum / n;
+    double variance = (sum_sq / n) - (mean * mean);
+    return sqrt(fabs(variance));
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GTK MEASUREMENT SCREEN UI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Modal GtkWindow, appears over body chart.
+Designed for one-handed operation in tablet mode.
+
+Layout:
+
+┌─────────────────────────────────────────┐
+│  Measuring: Lumbar Flexion              │
+│  ─────────────────────────────────────  │
+│                                         │
+│           65.3°                         │
+│      (large, centre screen)             │
+│                                         │
+│  Stability:  ████████░░  Good           │
+│  ─────────────────────────────────────  │
+│  Plane:  [Sagittal]  [Frontal]          │
+│  ─────────────────────────────────────  │
+│  [  Zero  ]  [ Capture ]  [ Cancel ]   │
+└─────────────────────────────────────────┘
+
+Stability bar states:
+  ░░░░░░░░░░  Settling...  (StdDev > 3°)
+  ████░░░░░░  Fair         (StdDev 1-3°)
+  ████████░░  Good         (StdDev 0.5-1°)
+  ██████████  Stable ✓     (StdDev < 0.5°)
+
+Auto-capture option (future): if stability reaches
+Stable ✓ for 2 consecutive seconds, auto-capture
+and give haptic/audio feedback. Saves needing to
+tap the screen at end range.
+
+Buttons sized minimum 60px height for stylus/touch.
+Zero button resets reference angle to current reading.
+Capture button only active when stability >= "Good".
+Cancel discards measurement, clears pending_measurement.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SESSION JSON IPC — PENDING MEASUREMENT PROTOCOL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Add to session JSON schema (bump schema_version when
+implementing — this is a breaking addition):
+
+"pending_measurement": null
+
+TUI sets when [📐] tapped:
+  "pending_measurement": "lx_rom_flex_range"
+
+GTK reads this field in its 1-second polling loop.
+When non-null and inclinometer tool is available:
+  - Open measurement screen automatically
+  - Display field name being measured
+  - On Capture: write value, clear pending_measurement
+
+GTK writes on Capture:
+  session["assessment"]["objective"]["lx_rom_flex_range"]
+    = "65"   (integer degrees as string)
+  session["pending_measurement"] = null
+
+TUI detects pending_measurement cleared:
+  Reads new value from objective section
+  Updates the relevant Input field
+  Shows brief "Captured: 65°" toast notification
+
+Fields that will use this (lumbar ROM):
+  lx_rom_flex_range       Lumbar flexion
+  lx_rom_ext_range        Lumbar extension
+  lx_rom_sf_r_range       Lumbar side flexion right
+  lx_rom_sf_l_range       Lumbar side flexion left
+  lx_rom_thor_flex_range  Thoracic flexion
+  lx_rom_thor_ext_range   Thoracic extension
+  lx_rom_thor_rot_r_range Thoracic rotation right
+  lx_rom_thor_rot_l_range Thoracic rotation left
+  lx_nd_slr_r_range       SLR right (degrees)
+  lx_nd_slr_l_range       SLR left
+  lx_nd_pkb_r_range       Prone knee bend right
+  lx_nd_pkb_l_range       Prone knee bend left
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILES TO CREATE / MODIFY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+physio-bodychart/src/inclinometer.c   NEW
+  - read_accel_axis_raw()
+  - accel_read_scale()
+  - smoothed_angle_sagittal()
+  - smoothed_angle_frontal()
+  - compute_stability()
+  - accel_poll_cb()  (GLib timeout, 50ms)
+  - inclinometer_window_new()
+  - inclinometer_window_show(field_name)
+
+physio-bodychart/src/inclinometer.h   NEW
+  - InclinometerState struct
+  - plane enum (PLANE_SAGITTAL, PLANE_FRONTAL)
+  - Public function declarations
+
+physio-bodychart/src/persistence.c    MODIFY
+  - Read pending_measurement on each poll cycle
+  - Write measurement result atomically
+  - Clear pending_measurement after write
+
+physio-bodychart/src/window.c         MODIFY
+  - Add inclinometer button to toolbar
+  - Wire pending_measurement detection
+
+physio-bodychart/meson.build          MODIFY
+  - Add inclinometer.c to sources
+  - Add libm dependency (math.h — atan2)
+  - No new external libraries needed
+    (sysfs reading is pure C stdlib)
+
+physio-assessment/sections/regions/lumbar.py   MODIFY
+  - Add [📐] button beside each ROM Input field
+  - Button calls: write_pending_measurement(field_id)
+  - Add toast handler for "Captured: X°" notification
+
+physio-assessment/storage.py          MODIFY
+  - Add write_pending_measurement(field_id) function
+  - Add clear_pending_measurement() function
+  - Watcher detects pending_measurement → null transition
+    and triggers field update in TUI
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CLAUDE CODE PROMPT — USE THIS WHEN READY TO BUILD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Read all files in physio-bodychart/src/ and
+physio-assessment/ before starting.
+Read this entire planning document first.
+
+Prerequisites before building:
+1. Objective section must be complete and stable
+   with all ROM fields present and saving correctly
+2. Run the axis orientation test (see above) and
+   record the correct axis mapping for this device
+3. Update the sagittal/frontal formulas with
+   confirmed axis assignments before writing any
+   C angle calculation code
+
+Then implement in this order:
+
+STEP 1 — inclinometer.c / inclinometer.h
+  Implement accelerometer reading and smoothing only.
+  No UI yet. Add a test mode: when GTK is launched
+  with --test-accel flag, print smoothed angle to
+  stdout every 500ms and exit. Verify this works
+  and readings are stable before proceeding.
+
+STEP 2 — Measurement screen UI
+  Modal GtkWindow as specified above.
+  Wire to accel polling timer.
+  Zero and Capture buttons functional.
+  Test standalone: toolbar button opens screen,
+  Zero sets reference, Capture prints value to
+  stdout. No session JSON integration yet.
+
+STEP 3 — Session JSON IPC
+  Add pending_measurement to session JSON schema.
+  Bump schema_version.
+  GTK persistence.c reads pending_measurement
+  on each poll cycle.
+  When non-null: open measurement screen with
+  field name displayed.
+  On Capture: write value to correct session
+  JSON field, clear pending_measurement atomically.
+
+STEP 4 — TUI side
+  Add [📐] button beside each ROM Input field
+  in lumbar.py.
+  Add write_pending_measurement() to storage.py.
+  Add watcher detection for measurement completion.
+  Add toast notification on capture.
+
+STEP 5 — Test full workflow
+  TUI: tap [📐] beside "Lumbar flexion range"
+  GTK: measurement screen opens automatically
+  Hold device, Zero, move to end range, Capture
+  TUI: field shows captured angle within 2 seconds
+  Session JSON: value persists after save/reload
+  Raw export: angle appears in ROM section
+
+Constraints:
+  No new external libraries — sysfs + stdlib only
+  Atomic writes maintained throughout
+  Graceful fallback if sensor not available:
+    [📐] button still appears but shows message
+    "Sensor not available — enter manually"
+  Do not break existing session save/load
+  Do not change any existing field IDs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FUTURE ENHANCEMENTS — NOT FOR INITIAL BUILD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Auto-capture: when stability reaches Stable ✓
+  for 2 consecutive seconds, capture automatically.
+  Add toggle in measurement screen. Off by default.
+
+Audio/haptic feedback on capture:
+  Simple beep via GLib or paplay.
+  Confirms measurement without needing to look
+  at screen.
+
+Normative values overlay:
+  After capture, show whether recorded angle is
+  within normal range for that movement.
+  e.g. Lumbar flexion: normal >60°
+  Source: clinical_kb.db normative_values table
+  (add this table when KB is built)
+
+Multi-point measurement:
+  Measure neutral AND end range separately.
+  Calculate difference automatically.
+  Useful for SLR where you measure from 0° supine.
+
+Cervical ROM integration:
+  Same code, different field IDs (cx_ prefix).
+  Add when cervical objective section is built.
+  No code changes needed — just new field IDs
+  in the pending_measurement IPC.
+
+════════════════════════════════════════════════════════════
+END OF ACCELEROMETER GONIOMETER PLANNING DOCUMENT
+Save this file as:
+  physio-assessment/docs/accelerometer-goniometer-plan.md
+════════════════════════════════════════════════════════════
