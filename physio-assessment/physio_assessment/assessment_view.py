@@ -28,17 +28,11 @@ from .objective.sections.muscle import MuscleSection
 from .objective.sections.functional import FunctionalSection
 from .objective.objective_view import ObjectiveSidebar
 from .storage import (
-    load_consent,
-    load_subjective,
-    load_medical,
-    load_pain_classification,
-    load_outcome_measures,
-    load_diagnosis,
-    load_barriers,
-    load_scratchpad,
     save_all_sections,
     save_raw_report,
     export_session_report,
+    save_clean_reports,
+    save_docx_report,
     assessment_path,
     save_objective,
     load_objective,
@@ -250,6 +244,8 @@ class AssessmentView(Container):
     def on_unmount(self) -> None:
         if self._save_task and not self._save_task.done():
             self._save_task.cancel()
+        if self.session_file:
+            save_docx_report(self.session_file)
 
     def load_session(self, session_file: str, data: dict) -> None:
         """Load session data into all sections."""
@@ -563,9 +559,10 @@ class AssessmentView(Container):
         self._refresh_nav_indicators(nav_data)
         self._update_medical_tab_color()
 
-        # Regenerate both reports on every save
+        # Regenerate all reports on every save
         save_raw_report(self.session_file)
         export_session_report(self.session_file)
+        save_clean_reports(self.session_file)
 
         self.post_message(self.SaveStateChanged("saved"))
 

@@ -7,6 +7,8 @@ Python-owned assessment block.
 """
 
 import json
+import re
+import subprocess
 import time
 import logging
 from pathlib import Path
@@ -237,7 +239,7 @@ def list_sessions() -> list[dict]:
                     data.get("objective", {}).get("zones") or
                     data.get("objective", {}).get("points")
                 ),
-                "sections_complete": count_complete_sections(data),
+                "sections_complete": sum(1 for v in data.get("sections_complete", {}).values() if v),
                 "obj_sections_complete": count_objective_complete_sections(str(session_file)),
             }
             sessions.append(session)
@@ -246,518 +248,6 @@ def list_sessions() -> list[dict]:
             continue
 
     return sessions
-
-
-def count_complete_sections(session_data: dict) -> int:
-    """Count how many assessment sections have content."""
-    sections = get_sections_complete(session_data)
-    return sum(1 for v in sections.values() if v)
-
-
-def get_sections_complete(session_data: dict) -> dict[str, bool]:
-    """
-    Check completion status of each core section.
-
-    Returns dict mapping section_id to completion status.
-    """
-    assessment = session_data.get("assessment", {})
-    complete_status = {}
-
-    # Special handling for 01_consent (has its own sub-block)
-    consent = assessment.get("consent", {})
-    complete_status["01_consent"] = (
-        consent.get("consent_to_proceed") is True
-        and bool(consent.get("preferred_name", "").strip())
-    )
-
-    # Define remaining sections and their mandatory fields
-    sections = {
-        "02_subjective": {
-            "assessment_fields": ["history"],
-        },
-        "03_medical": {
-            "assessment_fields": [],  # completion driven by save_medical via sections_complete
-        },
-        "04_pain_classification": {
-            "assessment_fields": [],
-        },
-        "05_outcome_measures": {
-            "assessment_fields": [],
-        },
-        "06_diagnosis": {
-            "assessment_fields": [],
-        },
-        "07_barriers": {
-            "assessment_fields": [],
-        },
-    }
-
-    # Check all other sections
-    for section_id, section_def in sections.items():
-        # Check if all mandatory assessment fields have content
-        all_filled = True
-        for field in section_def["assessment_fields"]:
-            if not assessment.get(field, "").strip():
-                all_filled = False
-                break
-
-        complete_status[section_id] = all_filled
-
-    return complete_status
-
-
-def is_section_complete(session_data: dict, section_id: str) -> bool:
-    """Check if a specific section is complete."""
-    sections = get_sections_complete(session_data)
-    return sections.get(section_id, False)
-
-
-def mark_section_complete(session_file: str, section_id: str) -> bool:
-    """
-    Mark a section as complete in the session.
-
-    Returns True on success.
-    """
-    path = Path(session_file)
-    if not path.exists():
-        return False
-
-    try:
-        data = json.loads(path.read_text())
-
-        # Initialize sections_complete if needed
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-
-        # Mark this section complete
-        data["sections_complete"][section_id] = True
-        data["sections_last_modified"][section_id] = int(time.time())
-
-        # Atomic write
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-
-        return True
-    except Exception as e:
-        logger.error(f"Failed to mark section complete: {e}")
-        return False
-
-
-def get_resume_section(session_data: dict) -> str:
-    """
-    Find the first incomplete section to resume from.
-
-    Returns section ID to open. If all complete, returns last section.
-    """
-    section_order = [
-        "01_consent",
-        "02_subjective",
-        "03_medical",
-        "04_pain_classification",
-        "05_outcome_measures",
-        "06_diagnosis",
-        "07_barriers",
-    ]
-
-    # Check sections in order
-    for section_id in section_order:
-        if not is_section_complete(session_data, section_id):
-            return section_id
-
-    # All complete; return last section
-    return section_order[-1]
-
-
-def load_consent(session_file: str) -> dict:
-    """
-    Load consent data from session JSON file.
-
-    Returns empty dict if file doesn't exist or can't be parsed.
-    """
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("consent", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_consent(session_file: str, consent: dict) -> bool:
-    """
-    Merge consent data into session JSON, preserving all other sections.
-
-    Updates sections_complete["01_consent"] based on consent data.
-    Uses atomic write (temp file + rename) to prevent corruption.
-    Returns True on success, False on error.
-    """
-    path = Path(session_file)
-
-    try:
-        # Read current file if it exists
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-
-        # Ensure assessment block exists
-        if "assessment" not in data:
-            data["assessment"] = {}
-
-        # Merge consent into assessment.consent
-        if "consent" not in data["assessment"]:
-            data["assessment"]["consent"] = {}
-        data["assessment"]["consent"].update(consent)
-
-        # Calculate completion for 01_consent
-        is_complete = (
-            consent.get("consent_to_proceed") is True
-            and bool(consent.get("preferred_name", "").strip())
-        )
-
-        # Update sections_complete
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-
-        data["sections_complete"]["01_consent"] = is_complete
-        data["sections_last_modified"]["01_consent"] = int(time.time())
-
-        # Atomic write: temp file, then rename
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-
-        logger.debug(f"Saved consent to {session_file}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed to save consent to {session_file}: {e}")
-        return False
-
-
-def load_subjective(session_file: str) -> dict:
-    """
-    Load subjective assessment data from session JSON file.
-
-    Returns empty dict if file doesn't exist or can't be parsed.
-    """
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("subjective", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_subjective(session_file: str, subjective: dict) -> bool:
-    """
-    Merge subjective assessment data into session JSON, preserving all other sections.
-
-    Updates sections_complete["02_subjective"] based on subjective data.
-    Uses atomic write (temp file + rename) to prevent corruption.
-    Returns True on success, False on error.
-    """
-    path = Path(session_file)
-
-    try:
-        # Read current file if it exists
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-
-        # Ensure assessment block exists
-        if "assessment" not in data:
-            data["assessment"] = {}
-
-        # Merge subjective into assessment.subjective
-        if "subjective" not in data["assessment"]:
-            data["assessment"]["subjective"] = {}
-        data["assessment"]["subjective"].update(subjective)
-
-        # Calculate completion for 02_subjective (self-harm risk assessed)
-        is_complete = subjective.get("self_harm_risk") is not None
-
-        # Update sections_complete
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-
-        data["sections_complete"]["02_subjective"] = is_complete
-        data["sections_last_modified"]["02_subjective"] = int(time.time())
-
-        # Atomic write: temp file, then rename
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-
-        logger.debug(f"Saved subjective to {session_file}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed to save subjective to {session_file}: {e}")
-        return False
-
-
-def load_medical(session_file: str) -> dict:
-    """Load medical screening data from session JSON file."""
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("medical", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_medical(session_file: str, medical: dict) -> bool:
-    """Merge medical screening data into session JSON, preserving all other sections."""
-    path = Path(session_file)
-    try:
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-        if "assessment" not in data:
-            data["assessment"] = {}
-        if "medical" not in data["assessment"]:
-            data["assessment"]["medical"] = {}
-        data["assessment"]["medical"].update(medical)
-
-        # Complete when all urgent red flag fields have been explicitly reviewed
-        urgent = [
-            "rf_saddle_anaesthesia", "rf_bladder_disturbance", "rf_bowel_disturbance",
-            "rf_bilateral_paraesthesia", "rf_gait_disturbance",
-        ]
-        is_complete = all(medical.get(fid) is not None for fid in urgent)
-
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-        data["sections_complete"]["03_medical"] = is_complete
-        data["sections_last_modified"]["03_medical"] = int(time.time())
-
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-        logger.debug(f"Saved medical to {session_file}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save medical to {session_file}: {e}")
-        return False
-
-
-def load_pain_classification(session_file: str) -> dict:
-    """Load pain classification data from session JSON file."""
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("pain_classification", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_pain_classification(session_file: str, pain: dict) -> bool:
-    """Merge pain classification data into session JSON, preserving all other sections."""
-    path = Path(session_file)
-    try:
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-        if "assessment" not in data:
-            data["assessment"] = {}
-        if "pain_classification" not in data["assessment"]:
-            data["assessment"]["pain_classification"] = {}
-        data["assessment"]["pain_classification"].update(pain)
-
-        is_complete = pain.get("summary_dominant") is not None
-
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-        data["sections_complete"]["04_pain_classification"] = is_complete
-        data["sections_last_modified"]["04_pain_classification"] = int(time.time())
-
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-        logger.debug(f"Saved pain_classification to {session_file}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save pain_classification to {session_file}: {e}")
-        return False
-
-
-def load_outcome_measures(session_file: str) -> dict:
-    """Load outcome measures data from session JSON file."""
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("outcome_measures", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_outcome_measures(session_file: str, om: dict) -> bool:
-    """Merge outcome measures data into session JSON, preserving all other sections."""
-    path = Path(session_file)
-    try:
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-        if "assessment" not in data:
-            data["assessment"] = {}
-        if "outcome_measures" not in data["assessment"]:
-            data["assessment"]["outcome_measures"] = {}
-        data["assessment"]["outcome_measures"].update(om)
-
-        main_scores = ["psfs_score", "bpi_activity", "dass_dep_score",
-                       "pcs_total_score", "pseq_score", "pcl5_score", "isi_score"]
-        is_complete = any(om.get(f, "").strip() for f in main_scores)
-
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-        data["sections_complete"]["05_outcome_measures"] = is_complete
-        data["sections_last_modified"]["05_outcome_measures"] = int(time.time())
-
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-        logger.debug(f"Saved outcome_measures to {session_file}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save outcome_measures to {session_file}: {e}")
-        return False
-
-
-def load_diagnosis(session_file: str) -> dict:
-    """Load diagnosis data from session JSON file."""
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("diagnosis", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_diagnosis(session_file: str, dx: dict) -> bool:
-    """Merge diagnosis data into session JSON, preserving all other sections."""
-    path = Path(session_file)
-    try:
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-        if "assessment" not in data:
-            data["assessment"] = {}
-        data["assessment"]["diagnosis"] = dx
-
-        is_complete = dx.get("mechanism") is not None
-
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-        data["sections_complete"]["06_diagnosis"] = is_complete
-        data["sections_last_modified"]["06_diagnosis"] = int(time.time())
-
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-        logger.debug(f"Saved diagnosis to {session_file}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save diagnosis to {session_file}: {e}")
-        return False
-
-
-def load_barriers(session_file: str) -> dict:
-    """Load barriers and treatment plan data from session JSON file."""
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("barriers", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_barriers(session_file: str, barriers: dict) -> bool:
-    """Merge barriers and treatment plan data into session JSON."""
-    path = Path(session_file)
-    try:
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-        if "assessment" not in data:
-            data["assessment"] = {}
-        data["assessment"]["barriers"] = barriers
-
-        # Complete when any main barrier has been explicitly reviewed (True or False)
-        main_barriers = [
-            "b_noci_disease", "b_noci_pacing", "b_noci_inflammatory", "b_noci_deconditioning",
-            "b_noci_movement", "b_noci_gait", "b_noci_strength", "b_noci_deep_muscle",
-            "b_noci_overactivity", "b_noci_nerve_mech", "b_noci_diet",
-            "b_neuro_confirmed", "b_neuro_unconfirmed",
-            "b_nocip_moderate", "b_nocip_crps", "b_nocip_fnd",
-            "b_psych_depression", "b_psych_anxiety", "b_psych_stress",
-            "b_psych_catastrophising", "b_psych_self_efficacy", "b_psych_unhelpful_beliefs",
-            "b_psych_ptsd", "b_psych_readiness",
-            "b_sleep_disturbed",
-            "b_social_home", "b_social_rtw",
-            "b_med_red_flag", "b_med_substance", "b_med_as", "b_med_aaa",
-            "b_med_vascular", "b_med_cervical_ha", "b_med_medico_legal",
-        ]
-        is_complete = any(barriers.get(fid) is not None for fid in main_barriers)
-
-        if "sections_complete" not in data:
-            data["sections_complete"] = {}
-        if "sections_last_modified" not in data:
-            data["sections_last_modified"] = {}
-        data["sections_complete"]["07_barriers"] = is_complete
-        data["sections_last_modified"]["07_barriers"] = int(time.time())
-
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-        logger.debug(f"Saved barriers to {session_file}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save barriers to {session_file}: {e}")
-        return False
 
 
 def write_tui_pid(pid: int) -> None:
@@ -859,8 +349,12 @@ def _raw_table(headers: list, rows: list) -> list:
     return [_fmt(headers), divider] + [_fmt(r) for r in rows]
 
 
-def _render_objective_md(obj: dict) -> list:
-    """Render all objective sections as comprehensive Markdown — all fields shown."""
+def _render_objective_md(obj: dict, clean: bool = False) -> list:
+    """Render all objective sections as Markdown.
+
+    clean=False: all fields shown; empty values shown as — / *(not answered)*.
+    clean=True: only sections/tables/rows with real data are included.
+    """
     lines: list = []
 
     gen  = obj.get("general",      {}) or {}
@@ -874,17 +368,51 @@ def _render_objective_md(obj: dict) -> list:
     if not any([gen, act, pas, neu, sen, mus, func]):
         return []
 
-    lines.append("## 04 Objective Examination")
-    lines.append("")
+    # ── clean-mode helpers ────────────────────────────────────────────────────
+
+    _EMPTY = frozenset(["—", "*(not answered)*", "*(not recorded)*", "*(empty)*", ""])
+
+    def _nodata(v) -> bool:
+        return v is None or str(v).strip() in _EMPTY
+
+    def _filter_rows(rows: list, data_from: int = 1) -> list:
+        if not clean:
+            return rows
+        return [r for r in rows if not all(_nodata(c) for c in r[data_from:])]
+
+    def _maybe_table(sl: list, title: str, headers: list, rows: list, data_from: int = 1) -> None:
+        rows = _filter_rows(rows, data_from)
+        if not rows:
+            return
+        if title:
+            sl.append(f"#### {title}")
+        sl.extend(_md_table(headers, rows))
+
+    def _maybe_note(sl: list, lbl: str, v: str) -> None:
+        if v:
+            sl.append(f"{lbl}: {v}")
+        elif not clean:
+            sl.append(f"{lbl}: *(empty)*")
+
+    def _flush_section(header: str, sl: list) -> None:
+        if sl:
+            if clean:
+                header = re.sub(r'^(#{1,3})\s*\d{2}\s+', r'\1 ', header)
+            lines.append(header)
+            lines.extend(sl)
+            lines.append("")
 
     # ── 01 General Observation ────────────────────────────────────────────────
     if gen:
-        lines.append("### 01 General Observation")
+        sl: list[str] = []
         for key, lbl, unit in [("go_height","Height","cm"),("go_weight","Weight","kg"),
                                 ("go_bmi","BMI",""),("go_nrs","NRS rest","/10"),
                                 ("go_sit_tol","Sit tol","min")]:
-            v = gen.get(key, "")
-            lines.append(f"**{lbl}:** {v}{unit}" if v else f"**{lbl}:** *(not recorded)*")
+            v = (gen.get(key) or "").strip()
+            if v:
+                sl.append(f"**{lbl}:** {v}{unit}")
+            elif not clean:
+                sl.append(f"**{lbl}:** *(not recorded)*")
         _posture_def = [("Lumbar lordosis","go_lx_lord"),("Thoracic kyphosis","go_tx_kyph"),
                         ("Antalgic lean","go_lean"),("Sway posture","go_sway"),
                         ("Breathing","go_breath"),("Scapular L","go_scap_l"),
@@ -895,8 +423,7 @@ def _render_objective_md(obj: dict) -> list:
             v = gen.get(key) or "—"
             cmt = gen.get(f"{key}_cmt", "").strip()
             posture_rows.append([lbl, f"{v} — {cmt}" if cmt else v])
-        lines.append("**Posture:**")
-        lines.extend(_md_table(["", "Finding"], posture_rows))
+        _maybe_table(sl, "Posture", ["", "Finding"], posture_rows)
         _func_def = [("Gait","go_gait"),("SLS Left","go_sls_l"),
                      ("SLS Right","go_sls_r"),("Sit-to-stand","go_sts")]
         func_rows = []
@@ -904,17 +431,15 @@ def _render_objective_md(obj: dict) -> list:
             v = gen.get(key) or "—"
             cmt = gen.get(f"{key}_cmt", "").strip()
             func_rows.append([lbl, f"{v} — {cmt}" if cmt else v])
-        lines.append("**Functional Movement:**")
-        lines.extend(_md_table(["", "Finding"], func_rows))
+        _maybe_table(sl, "Functional Movement", ["", "Finding"], func_rows)
         for key, lbl in [("go_posture_notes","*Posture notes*"),
                           ("go_functional_notes","*Functional notes*")]:
-            v = gen.get(key, "").strip()
-            lines.append(f"{lbl}: {v}" if v else f"{lbl}: *(empty)*")
-        lines.append("")
+            _maybe_note(sl, lbl, gen.get(key, "").strip())
+        _flush_section("### 01 General Observation", sl)
 
     # ── 02 Active Movement ────────────────────────────────────────────────────
     if act:
-        lines.append("### 02 Active Movement")
+        sl = []
         lx_rows_def = [("Flexion","lx_flex",True),("Extension","lx_ext",True),
                        ("Lat Flex","lx_lf",False),("Rotation","lx_rot",False)]
         tx_rows_def = [("Flexion","tx_flex",True),("Extension","tx_ext",True),
@@ -933,39 +458,34 @@ def _render_objective_md(obj: dict) -> list:
                 else:
                     ax_r = _cell(prefix, "ax_r"); reax_r = _cell(prefix, "reax_r")
                     tbl_rows.append([label, ax_l, ax_r, reax_l, reax_r])
-            lines.append(f"**{title}:**")
-            lines.extend(_md_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows))
+            _maybe_table(sl, title, ["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows)
         for key, lbl in [("am_lx_notes","*Lumbar notes*"),("am_tx_notes","*Thoracic notes*")]:
-            v = act.get(key, "").strip()
-            lines.append(f"{lbl}: {v}" if v else f"{lbl}: *(empty)*")
-        lines.append("")
+            _maybe_note(sl, lbl, act.get(key, "").strip())
+        _flush_section("### 02 Active Movement", sl)
 
     # ── 03 Passive Movement ───────────────────────────────────────────────────
     if pas:
-        lines.append("### 03 Passive Movement & Overpressure")
+        sl = []
         op_def = [("Tx Flexion","op_tx_flex"),("Tx Extension","op_tx_ext"),
                   ("Tx Rot L","op_tx_rot_l"),("Tx Rot R","op_tx_rot_r"),
                   ("Lx Flexion","op_lx_flex"),("Lx Extension","op_lx_ext"),
                   ("Lx Lat Fl L","op_lx_lf_l"),("Lx Lat Fl R","op_lx_lf_r")]
         op_rows = [[lbl, pas.get(f"{p}_ef") or "—", pas.get(f"{p}_resp") or "—"]
                    for lbl, p in op_def]
-        lines.append("**Overpressure:**")
-        lines.extend(_md_table(["Movement", "End-feel", "Response"], op_rows))
+        _maybe_table(sl, "Overpressure", ["Movement", "End-feel", "Response"], op_rows)
         paivm_levels = ["L5","L4","L3","L2","L1","T12","T11","T10","T9","T8"]
         paivm_rows = [[lv, pas.get(f"pm_{lv}_c") or "—",
                           pas.get(f"pm_{lv}_ul_l") or "—",
                           pas.get(f"pm_{lv}_ul_r") or "—"]
                       for lv in paivm_levels]
-        lines.append("**PAIVMs:**")
-        lines.extend(_md_table(["Level", "Central", "UL Left", "UL Right"], paivm_rows))
+        _maybe_table(sl, "PAIVMs", ["Level", "Central", "UL Left", "UL Right"], paivm_rows)
         for key, lbl in [("pm_op_notes","*OP notes*"),("pm_paivm_notes","*PAIVM notes*")]:
-            v = pas.get(key, "").strip()
-            lines.append(f"{lbl}: {v}" if v else f"{lbl}: *(empty)*")
-        lines.append("")
+            _maybe_note(sl, lbl, pas.get(key, "").strip())
+        _flush_section("### 03 Passive Movement & Overpressure", sl)
 
     # ── 04 Neurological ───────────────────────────────────────────────────────
     if neu:
-        lines.append("### 04 Neurological")
+        sl = []
         neuro_def = [
             ("Knee jerk L3/4","nr_knee"),("Ankle jerk S1","nr_ankle"),("Plantar","nr_plantar"),
             ("L2 Hip flex","nr_l2"),("L3 Knee ext","nr_l3"),("L4 Ankle DF","nr_l4"),
@@ -973,14 +493,13 @@ def _render_objective_md(obj: dict) -> list:
         ]
         neuro_rows = [[lbl, neu.get(f"{p}_l") or "—", neu.get(f"{p}_r") or "—"]
                       for lbl, p in neuro_def]
-        lines.extend(_md_table(["Test", "Left", "Right"], neuro_rows))
+        _maybe_table(sl, "", ["Test", "Left", "Right"], neuro_rows)
         _derm_def_nr = [("L2 Ant thigh","sn_l2"),("L3 Med knee","sn_l3"),
                         ("L4 Med leg","sn_l4"),("L5 Lat leg/GT","sn_l5"),
                         ("S1 Lat foot","sn_s1"),("S2 Post thigh","sn_s2")]
         derm_rows_nr = [[lbl, neu.get(f"{p}_l") or "—", neu.get(f"{p}_r") or "—"]
                         for lbl, p in _derm_def_nr]
-        lines.append("**Dermatomes:**")
-        lines.extend(_md_table(["Level", "Left", "Right"], derm_rows_nr))
+        _maybe_table(sl, "Dermatomes", ["Level", "Left", "Right"], derm_rows_nr)
         nd_def = [("SLR","nr_slr"),("Slump","nr_slump"),("PKF","nr_pkf")]
         nd_rows = []
         for lbl, p in nd_def:
@@ -988,25 +507,25 @@ def _render_objective_md(obj: dict) -> list:
             rd = neu.get(f"{p}_r_deg","") or ""; rr = neu.get(f"{p}_r_resp","") or "—"
             nd_rows.append([lbl, f"{ld}°" if ld else "—", lr,
                                   f"{rd}°" if rd else "—", rr])
-        lines.append("**Neurodynamics:**")
-        lines.extend(_md_table(["Test", "L °", "L Resp", "R °", "R Resp"], nd_rows))
+        _maybe_table(sl, "Neurodynamics", ["Test", "L °", "L Resp", "R °", "R Resp"], nd_rows)
         umn_items = [("Hyperreflexia","nr_umn_hyper"),("Babinski +","nr_umn_bab"),
                      ("Clonus","nr_umn_clonus"),("Romberg +","nr_umn_romberg"),
                      ("Coord impaired","nr_umn_coord")]
         umn_rows = [[lbl, "Yes" if neu.get(uid) is True else "No" if neu.get(uid) is False else "*(not answered)*"]
                     for lbl, uid in umn_items]
-        lines.append("**UMN Signs:**")
-        lines.extend(_md_table(["Sign", "Result"], umn_rows))
-        v = neu.get("nr_notes", "").strip()
-        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
-        lines.append("")
+        _maybe_table(sl, "UMN Signs", ["Sign", "Result"], umn_rows)
+        _maybe_note(sl, "*Notes:*", neu.get("nr_notes", "").strip())
+        _flush_section("### 04 Neurological", sl)
 
     # ── 05 Sensory ────────────────────────────────────────────────────────────
     if sen:
-        lines.append("### 05 Sensory")
-        ppt = sen.get("sn_ppt") or "*(not recorded)*"
+        sl = []
+        ppt = (sen.get("sn_ppt") or "").strip()
         ppt_detail = sen.get("sn_ppt_detail", "").strip()
-        lines.append(f"**PPT (algometer):** {ppt}" + (f" — {ppt_detail}" if ppt_detail else ""))
+        if ppt:
+            sl.append(f"**PPT (algometer):** {ppt}" + (f" — {ppt_detail}" if ppt_detail else ""))
+        elif not clean:
+            sl.append("**PPT (algometer):** *(not recorded)*")
         hypo_items = [("Sharp/blunt","sn_sharp_blunt",True),("Two-point discrim","sn_tpd",True),
                       ("Light touch","sn_lt",True),("Body perception","sn_body",False)]
         hyper_items = [("Static allodynia","sn_static_allodynia",True),
@@ -1020,58 +539,59 @@ def _render_objective_md(obj: dict) -> list:
             rows = []
             for lbl, sid, has_detail in items:
                 v = sen.get(sid)
+                if clean and v is None:
+                    continue
                 state = "Yes" if v is True else "No" if v is False else "*(not answered)*"
                 detail = sen.get(f"{sid}_detail", "").strip() if has_detail and v is True else ""
                 rows.append([lbl, f"{state} — {detail}" if detail else state])
-            lines.append(f"**{sec_lbl}:**")
-            lines.extend(_md_table(["Test", "Result"], rows))
-        v = sen.get("sn_notes", "").strip()
-        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
-        lines.append("")
+            if rows:
+                sl.append(f"**{sec_lbl}:**")
+                sl.extend(_md_table(["Test", "Result"], rows))
+        _maybe_note(sl, "*Notes:*", sen.get("sn_notes", "").strip())
+        _flush_section("### 05 Sensory", sl)
 
     # ── 06 Muscle Testing ─────────────────────────────────────────────────────
     if mus:
-        lines.append("### 06 Muscle Testing")
+        sl = []
         ml_def = [("QL (side sit)","ml_ql"),("Thomas test","ml_thomas"),
                   ("Hamstrings SLR","ml_ham")]
         ml_rows = [[lbl, mus.get(f"{p}_l") or "—", mus.get(f"{p}_r") or "—"]
                    for lbl, p in ml_def]
-        lines.append("**Muscle Length:**")
-        lines.extend(_md_table(["Test", "Left", "Right"], ml_rows))
+        _maybe_table(sl, "Muscle Length", ["Test", "Left", "Right"], ml_rows)
         ma_def = [("Tx erector spinae","ma_tx_es"),("Transversus abd","ma_tva"),
                   ("Lumbar multifidus","ma_lmf")]
         ma_rows = [[lbl, mus.get(mid) or "—"] for lbl, mid in ma_def]
-        lines.append("**Muscle Activation:**")
-        lines.extend(_md_table(["Test", "Finding"], ma_rows))
-        lines.append(f"**Trunk flexion:** {mus.get('st_flex','') or '*(not recorded)*'} reps/min")
-        lines.append(f"**Trunk extension:** {mus.get('st_ext','') or '*(not recorded)*'} raises/min")
+        _maybe_table(sl, "Muscle Activation", ["Test", "Finding"], ma_rows)
+        for key, lbl, unit in [("st_flex","Trunk flexion","reps/min"),
+                                ("st_ext","Trunk extension","raises/min")]:
+            v = (mus.get(key) or "").strip()
+            if v:
+                sl.append(f"**{lbl}:** {v} {unit}")
+            elif not clean:
+                sl.append(f"**{lbl}:** *(not recorded)* {unit}")
         hip_def = [("Hip flexion","sh_hip_flex"),("Hip extension","sh_hip_ext"),
                    ("Hip abduction","sh_hip_abd"),("Hip adduction","sh_hip_add"),
                    ("Hip int rotation","sh_hip_ir"),("Hip ext rotation","sh_hip_er")]
         hip_rows = [[lbl, mus.get(f"{p}_l") or "—", mus.get(f"{p}_r") or "—"]
                     for lbl, p in hip_def]
-        lines.append("**Hip Strength (Wagner FPX kg):**")
-        lines.extend(_md_table(["Movement", "Left kg", "Right kg"], hip_rows))
+        _maybe_table(sl, "Hip Strength (Wagner FPX kg)", ["Movement", "Left kg", "Right kg"], hip_rows)
         sij_items = [("Sacral thrust","sij_sacral"),("Post thigh thrust","sij_ptt"),
                      ("Distraction supine","sij_dist"),("Compression s/l","sij_comp"),
                      ("Gaenslen","sij_gaenslen"),("ASLR compression","sij_aslr")]
         sij_rows = [[lbl, "Yes" if mus.get(sid) is True else "No" if mus.get(sid) is False else "*(not answered)*"]
                     for lbl, sid in sij_items]
-        lines.append("**SIJ Provocation:**")
-        lines.extend(_md_table(["Test", "Result"], sij_rows))
-        v = mus.get("mu_notes", "").strip()
-        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
-        lines.append("")
+        _maybe_table(sl, "SIJ Provocation", ["Test", "Result"], sij_rows)
+        _maybe_note(sl, "*Notes:*", mus.get("mu_notes", "").strip())
+        _flush_section("### 06 Muscle Testing", sl)
 
     # ── 07 Functional ─────────────────────────────────────────────────────────
     if func:
-        lines.append("### 07 Functional")
+        sl = []
         obs_def = [("Gait","ft_gait"),("Prone hip rot","ft_phr"),
                    ("Sit-to-stand","ft_sts_q"),("SLS Left","ft_sls_l"),
                    ("SLS Right","ft_sls_r")]
         obs_rows = [[lbl, func.get(fid) or "—"] for lbl, fid in obs_def]
-        lines.append("**Movement Observation:**")
-        lines.extend(_md_table(["Test", "Finding"], obs_rows))
+        _maybe_table(sl, "Movement Observation", ["Test", "Finding"], obs_rows)
         bal_def = [("Both legs",["ft_bal_both"]),("Feet together",["ft_bal_feet"]),
                    ("Tandem",["ft_bal_tandem"]),
                    ("SLS eyes open",["ft_sls_eo_l","ft_sls_eo_r"]),
@@ -1083,25 +603,31 @@ def _render_objective_md(obj: dict) -> list:
             if len(ids) == 1:
                 vals = [vals[0], "—"]
             bal_rows.append([lbl] + vals)
-        lines.append("**Balance (Steffen 2002):**")
-        lines.extend(_md_table(["Test", "Left s", "Right s"], bal_rows))
+        _maybe_table(sl, "Balance (Steffen 2002)", ["Test", "Left s", "Right s"], bal_rows)
         cap_def = [("TUG (3m)","ft_tug","s"),("5× Sit-to-Stand","ft_sts5","s"),
                    ("10m comfortable","ft_10m_e","m/s"),("10m fast","ft_10m_f","m/s"),
                    ("2 min walk","ft_2mw","m")]
         cap_rows = [[lbl, f"{func.get(fid,'') or '—'} {unit}".strip() if func.get(fid,"") else "—"]
                     for lbl, fid, unit in cap_def]
-        lines.append("**Timed Capability:**")
-        lines.extend(_md_table(["Test", "Result"], cap_rows))
-        v = func.get("ft_notes", "").strip()
-        lines.append(f"*Notes:* {v}" if v else "*Notes:* *(empty)*")
-        lines.append("")
+        _maybe_table(sl, "Timed Capability", ["Test", "Result"], cap_rows)
+        _maybe_note(sl, "*Notes:*", func.get("ft_notes", "").strip())
+        _flush_section("### 07 Functional", sl)
 
+    if not lines:
+        return []
+
+    obj_heading = "## Objective Examination" if clean else "## 04 Objective Examination"
+    lines.insert(0, obj_heading)
+    lines.insert(1, "")
     return lines
 
 
-def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
-    """Append objective sections in plain-text format to lines list."""
+def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str,
+                          clean: bool = False) -> None:
+    """Append objective sections in plain-text format to lines list.
 
+    clean=True: omit sections/tables/rows with no real data.
+    """
     gen  = obj.get("general",      {}) or {}
     act  = obj.get("active",       {}) or {}
     pas  = obj.get("passive",      {}) or {}
@@ -1113,19 +639,44 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
     if not any([gen, act, pas, neu, sen, mus, func]):
         return
 
-    lines.append("")
-    lines.append(SEP)
-    lines.append("SECTION 8: OBJECTIVE EXAMINATION")
-    lines.append(SEP)
+    # ── clean-mode helpers ────────────────────────────────────────────────────
+    _EMPTY_RAW = frozenset(["-", "(not answered)", "(not recorded)", "(empty)", ""])
 
-    # ── 01 General ────────────────────────────────────────────────────────────
+    def _nodata(v) -> bool:
+        return v is None or str(v).strip() in _EMPTY_RAW
+
+    def _filter_rows(rows: list, data_from: int = 1) -> list:
+        if not clean:
+            return rows
+        return [r for r in rows if not all(_nodata(c) for c in r[data_from:])]
+
+    def _maybe_table(sl: list, headers: list, rows: list, data_from: int = 1) -> None:
+        rows = _filter_rows(rows, data_from)
+        if not rows:
+            return
+        sl.extend(_raw_table(headers, rows))
+
+    _obj_header_written = [False]
+
+    def _flush_section(header: str, sl: list) -> None:
+        if sl:
+            if not _obj_header_written[0]:
+                lines.extend(["", SEP, "SECTION 8: OBJECTIVE EXAMINATION", SEP])
+                _obj_header_written[0] = True
+            lines.extend(["", f"  — {header} —"])
+            lines.extend(sl)
+
+    # ── 01 General Observation ────────────────────────────────────────────────
     if gen:
-        lines.append("  — 01 General Observation —")
+        sl: list[str] = []
         for key, lbl, unit in [("go_height","Height","cm"),("go_weight","Weight","kg"),
                                 ("go_bmi","BMI",""),("go_nrs","NRS rest","/10"),
                                 ("go_sit_tol","Sit tol","min")]:
-            v = gen.get(key, "")
-            lines.append(f"  {lbl}: {v}{unit}" if v else f"  {lbl}: (not recorded)")
+            v = (gen.get(key) or "").strip()
+            if v:
+                sl.append(f"  {lbl}: {v}{unit}")
+            elif not clean:
+                sl.append(f"  {lbl}: (not recorded)")
         _posture_raw = [("Lumbar lordosis","go_lx_lord"),("Thoracic kyphosis","go_tx_kyph"),
                         ("Antalgic lean","go_lean"),("Sway posture","go_sway"),
                         ("Breathing","go_breath"),("Scapular L","go_scap_l"),
@@ -1133,21 +684,24 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
                         ("Undress/transfer","go_transfer")]
         p_rows = [[lbl, gen.get(key) or "(not recorded)", gen.get(f"{key}_cmt", "")]
                   for lbl, key in _posture_raw]
-        lines.extend(_raw_table(["Posture", "Finding", "Comment"], p_rows))
+        _maybe_table(sl, ["Posture", "Finding", "Comment"], p_rows)
         _func_raw = [("Gait","go_gait"),("SLS Left","go_sls_l"),
                      ("SLS Right","go_sls_r"),("Sit-to-stand","go_sts")]
         f_rows = [[lbl, gen.get(key) or "(not recorded)", gen.get(f"{key}_cmt", "")]
                   for lbl, key in _func_raw]
-        lines.extend(_raw_table(["Function", "Finding", "Comment"], f_rows))
+        _maybe_table(sl, ["Function", "Finding", "Comment"], f_rows)
         for key, lbl in [("go_posture_notes","Posture notes"),
                           ("go_functional_notes","Functional notes")]:
             v = gen.get(key, "").strip()
-            lines.append(f"  {lbl}: {v}" if v else f"  {lbl}: (empty)")
+            if v:
+                sl.append(f"  {lbl}: {v}")
+            elif not clean:
+                sl.append(f"  {lbl}: (empty)")
+        _flush_section("01 General Observation", sl)
 
     # ── 02 Active Movement ────────────────────────────────────────────────────
     if act:
-        lines.append("")
-        lines.append("  — 02 Active Movement —")
+        sl = []
         lx_rows_def = [("Flexion","lx_flex",True),("Extension","lx_ext",True),
                        ("Lat Flex","lx_lf",False),("Rotation","lx_rot",False)]
         tx_rows_def = [("Flexion","tx_flex",True),("Extension","tx_ext",True),
@@ -1166,37 +720,48 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
                 else:
                     ax_r = _cell(prefix,"ax_r"); reax_r = _cell(prefix,"reax_r")
                     tbl_rows.append([lbl, ax_l, ax_r, reax_l, reax_r])
-            lines.append(f"  {title}:")
-            lines.extend(_raw_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows))
+            filtered = _filter_rows(tbl_rows)
+            if filtered:
+                sl.append(f"  {title}:")
+                sl.extend(_raw_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], filtered))
+            elif not clean:
+                sl.append(f"  {title}:")
+                sl.extend(_raw_table(["", "Ax L", "Ax R", "ReAx L", "ReAx R"], tbl_rows))
         for key, lbl in [("am_lx_notes","Lumbar notes"),("am_tx_notes","Thoracic notes")]:
             v = act.get(key, "").strip()
-            lines.append(f"  {lbl}: {v}" if v else f"  {lbl}: (empty)")
+            if v:
+                sl.append(f"  {lbl}: {v}")
+            elif not clean:
+                sl.append(f"  {lbl}: (empty)")
+        _flush_section("02 Active Movement", sl)
 
     # ── 03 Passive Movement ───────────────────────────────────────────────────
     if pas:
-        lines.append("")
-        lines.append("  — 03 Passive Movement & Overpressure —")
+        sl = []
         op_def = [("Tx Flexion","op_tx_flex"),("Tx Extension","op_tx_ext"),
                   ("Tx Rot L","op_tx_rot_l"),("Tx Rot R","op_tx_rot_r"),
                   ("Lx Flexion","op_lx_flex"),("Lx Extension","op_lx_ext"),
                   ("Lx Lat Fl L","op_lx_lf_l"),("Lx Lat Fl R","op_lx_lf_r")]
         op_rows = [[lbl, pas.get(f"{p}_ef") or "-", pas.get(f"{p}_resp") or "-"]
                    for lbl, p in op_def]
-        lines.extend(_raw_table(["Overpressure", "End-feel", "Response"], op_rows))
+        _maybe_table(sl, ["Overpressure", "End-feel", "Response"], op_rows)
         paivm_levels = ["L5","L4","L3","L2","L1","T12","T11","T10","T9","T8"]
         paivm_rows = [[lv, pas.get(f"pm_{lv}_c") or "-",
                           pas.get(f"pm_{lv}_ul_l") or "-",
                           pas.get(f"pm_{lv}_ul_r") or "-"]
                       for lv in paivm_levels]
-        lines.extend(_raw_table(["PAIVM", "Central", "UL Left", "UL Right"], paivm_rows))
+        _maybe_table(sl, ["PAIVM", "Central", "UL Left", "UL Right"], paivm_rows)
         for key, lbl in [("pm_op_notes","OP notes"),("pm_paivm_notes","PAIVM notes")]:
             v = pas.get(key, "").strip()
-            lines.append(f"  {lbl}: {v}" if v else f"  {lbl}: (empty)")
+            if v:
+                sl.append(f"  {lbl}: {v}")
+            elif not clean:
+                sl.append(f"  {lbl}: (empty)")
+        _flush_section("03 Passive Movement & Overpressure", sl)
 
     # ── 04 Neurological ───────────────────────────────────────────────────────
     if neu:
-        lines.append("")
-        lines.append("  — 04 Neurological —")
+        sl = []
         neuro_def = [("Knee jerk L3/4","nr_knee"),("Ankle jerk S1","nr_ankle"),
                      ("Plantar","nr_plantar"),
                      ("L2 Hip flex","nr_l2"),("L3 Knee ext","nr_l3"),
@@ -1204,13 +769,13 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
                      ("S1 PF/evert","nr_s1"),("S2 Ham/KF","nr_s2")]
         neuro_rows = [[lbl, neu.get(f"{p}_l") or "-", neu.get(f"{p}_r") or "-"]
                       for lbl, p in neuro_def]
-        lines.extend(_raw_table(["Test", "Left", "Right"], neuro_rows))
+        _maybe_table(sl, ["Test", "Left", "Right"], neuro_rows)
         _derm_raw = [("L2 Ant thigh","sn_l2"),("L3 Med knee","sn_l3"),
                      ("L4 Med leg","sn_l4"),("L5 Lat leg/GT","sn_l5"),
                      ("S1 Lat foot","sn_s1"),("S2 Post thigh","sn_s2")]
         derm_raw_rows = [[lbl, neu.get(f"{p}_l") or "-", neu.get(f"{p}_r") or "-"]
                          for lbl, p in _derm_raw]
-        lines.extend(_raw_table(["Dermatome", "Left", "Right"], derm_raw_rows))
+        _maybe_table(sl, ["Dermatome", "Left", "Right"], derm_raw_rows)
         nd_def = [("SLR","nr_slr"),("Slump","nr_slump"),("PKF","nr_pkf")]
         nd_rows = []
         for lbl, p in nd_def:
@@ -1218,23 +783,31 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
             rd = neu.get(f"{p}_r_deg","") or ""; rr = neu.get(f"{p}_r_resp","") or "-"
             nd_rows.append([lbl, f"{ld}°" if ld else "-", lr,
                                   f"{rd}°" if rd else "-", rr])
-        lines.extend(_raw_table(["Neurodynamics","L°","L Resp","R°","R Resp"], nd_rows))
+        _maybe_table(sl, ["Neurodynamics","L°","L Resp","R°","R Resp"], nd_rows)
         umn_items = [("Hyperreflexia","nr_umn_hyper"),("Babinski +","nr_umn_bab"),
                      ("Clonus","nr_umn_clonus"),("Romberg +","nr_umn_romberg"),
                      ("Coord impaired","nr_umn_coord")]
         for lbl, uid in umn_items:
             v = neu.get(uid)
-            lines.append(f"  {lbl}: {'✓ Yes' if v is True else '✗ No' if v is False else '(not answered)'}")
+            if clean and v is None:
+                continue
+            sl.append(f"  {lbl}: {'✓ Yes' if v is True else '✗ No' if v is False else '(not answered)'}")
         v = neu.get("nr_notes", "").strip()
-        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+        if v:
+            sl.append(f"  Notes: {v}")
+        elif not clean:
+            sl.append("  Notes: (empty)")
+        _flush_section("04 Neurological", sl)
 
     # ── 05 Sensory ────────────────────────────────────────────────────────────
     if sen:
-        lines.append("")
-        lines.append("  — 05 Sensory —")
-        ppt_raw = sen.get("sn_ppt") or "(not recorded)"
+        sl = []
+        ppt_raw = (sen.get("sn_ppt") or "").strip()
         ppt_detail_raw = sen.get("sn_ppt_detail", "").strip()
-        lines.append(f"  PPT (algometer): {ppt_raw}" + (f" — {ppt_detail_raw}" if ppt_detail_raw else ""))
+        if ppt_raw:
+            sl.append(f"  PPT (algometer): {ppt_raw}" + (f" — {ppt_detail_raw}" if ppt_detail_raw else ""))
+        elif not clean:
+            sl.append("  PPT (algometer): (not recorded)")
         hypo_items = [("Sharp/blunt","sn_sharp_blunt",True),
                       ("Two-point discrim","sn_tpd",True),
                       ("Light touch","sn_lt",True),
@@ -1249,51 +822,66 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
         for items in (hypo_items, hyper_items):
             for lbl, sid, has_detail in items:
                 v = sen.get(sid)
+                if clean and v is None:
+                    continue
                 detail = sen.get(f"{sid}_detail", "").strip() if has_detail else ""
                 state = "✓ Yes" if v is True else "✗ No" if v is False else "(not answered)"
-                lines.append(f"  {lbl}: {state}" + (f" — {detail}" if detail and v is True else ""))
+                sl.append(f"  {lbl}: {state}" + (f" — {detail}" if detail and v is True else ""))
         v = sen.get("sn_notes", "").strip()
-        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+        if v:
+            sl.append(f"  Notes: {v}")
+        elif not clean:
+            sl.append("  Notes: (empty)")
+        _flush_section("05 Sensory", sl)
 
     # ── 06 Muscle Testing ─────────────────────────────────────────────────────
     if mus:
-        lines.append("")
-        lines.append("  — 06 Muscle Testing —")
+        sl = []
         ml_def = [("QL (side sit)","ml_ql"),("Thomas test","ml_thomas"),
                   ("Hamstrings SLR","ml_ham")]
         ml_rows = [[lbl, mus.get(f"{p}_l") or "-", mus.get(f"{p}_r") or "-"]
                    for lbl, p in ml_def]
-        lines.extend(_raw_table(["Muscle Length", "Left", "Right"], ml_rows))
+        _maybe_table(sl, ["Muscle Length", "Left", "Right"], ml_rows)
         ma_def = [("Tx erector spinae","ma_tx_es"),("Transversus abd","ma_tva"),
                   ("Lumbar multifidus","ma_lmf")]
         ma_rows = [[lbl, mus.get(mid) or "-"] for lbl, mid in ma_def]
-        lines.extend(_raw_table(["Activation", "Finding"], ma_rows))
-        lines.append(f"  Trunk flexion: {mus.get('st_flex','') or '(not recorded)'} reps/min")
-        lines.append(f"  Trunk extension: {mus.get('st_ext','') or '(not recorded)'} raises/min")
+        _maybe_table(sl, ["Activation", "Finding"], ma_rows)
+        for key, lbl, unit in [("st_flex","Trunk flexion","reps/min"),
+                                ("st_ext","Trunk extension","raises/min")]:
+            v = (mus.get(key) or "").strip()
+            if v:
+                sl.append(f"  {lbl}: {v} {unit}")
+            elif not clean:
+                sl.append(f"  {lbl}: (not recorded) {unit}")
         hip_def = [("Hip flexion","sh_hip_flex"),("Hip extension","sh_hip_ext"),
                    ("Hip abduction","sh_hip_abd"),("Hip adduction","sh_hip_add"),
                    ("Hip int rotation","sh_hip_ir"),("Hip ext rotation","sh_hip_er")]
         hip_rows = [[lbl, mus.get(f"{p}_l") or "-", mus.get(f"{p}_r") or "-"]
                     for lbl, p in hip_def]
-        lines.extend(_raw_table(["Hip Strength (kg)", "Left", "Right"], hip_rows))
+        _maybe_table(sl, ["Hip Strength (kg)", "Left", "Right"], hip_rows)
         sij_items = [("Sacral thrust","sij_sacral"),("Post thigh thrust","sij_ptt"),
                      ("Distraction supine","sij_dist"),("Compression s/l","sij_comp"),
                      ("Gaenslen","sij_gaenslen"),("ASLR compression","sij_aslr")]
         for lbl, sid in sij_items:
             v = mus.get(sid)
-            lines.append(f"  SIJ {lbl}: {'✓ Yes' if v is True else '✗ No' if v is False else '(not answered)'}")
+            if clean and v is None:
+                continue
+            sl.append(f"  SIJ {lbl}: {'✓ Yes' if v is True else '✗ No' if v is False else '(not answered)'}")
         v = mus.get("mu_notes", "").strip()
-        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+        if v:
+            sl.append(f"  Notes: {v}")
+        elif not clean:
+            sl.append("  Notes: (empty)")
+        _flush_section("06 Muscle Testing", sl)
 
     # ── 07 Functional ─────────────────────────────────────────────────────────
     if func:
-        lines.append("")
-        lines.append("  — 07 Functional —")
+        sl = []
         obs_def = [("Gait","ft_gait"),("Prone hip rot","ft_phr"),
                    ("Sit-to-stand","ft_sts_q"),("SLS Left","ft_sls_l"),
                    ("SLS Right","ft_sls_r")]
         obs_rows = [[lbl, func.get(fid) or "-"] for lbl, fid in obs_def]
-        lines.extend(_raw_table(["Movement Obs", "Finding"], obs_rows))
+        _maybe_table(sl, ["Movement Obs", "Finding"], obs_rows)
         bal_def = [("Both legs",["ft_bal_both"],"s"),("Feet together",["ft_bal_feet"],"s"),
                    ("Tandem",["ft_bal_tandem"],"s"),
                    ("SLS eyes open",["ft_sls_eo_l","ft_sls_eo_r"],"s"),
@@ -1305,21 +893,28 @@ def _render_objective_raw(obj: dict, lines: list, SEP: str, SEP2: str) -> None:
             if len(ids) == 1:
                 vals = [vals[0], "-"]
             bal_rows.append([lbl] + vals)
-        lines.extend(_raw_table(["Balance (Steffen)", "Left s", "Right s"], bal_rows))
+        _maybe_table(sl, ["Balance (Steffen)", "Left s", "Right s"], bal_rows)
         cap_def = [("TUG (3m)","ft_tug","s"),("5× STS","ft_sts5","s"),
                    ("10m comfortable","ft_10m_e","m/s"),("10m fast","ft_10m_f","m/s"),
                    ("2 min walk","ft_2mw","m")]
         cap_rows = [[lbl, f"{func.get(fid,'') or '-'} {unit}".strip()]
                     for lbl, fid, unit in cap_def]
-        lines.extend(_raw_table(["Timed Capability", "Result"], cap_rows))
+        _maybe_table(sl, ["Timed Capability", "Result"], cap_rows)
         v = func.get("ft_notes", "").strip()
-        lines.append(f"  Notes: {v}" if v else "  Notes: (empty)")
+        if v:
+            sl.append(f"  Notes: {v}")
+        elif not clean:
+            sl.append("  Notes: (empty)")
+        _flush_section("07 Functional", sl)
 
 
-def export_session_report(session_file: str) -> str:  # noqa: C901
+
+def export_session_report(session_file: str, clean: bool = False) -> str:  # noqa: C901
     """
-    Write a comprehensive Markdown report to <session_dir>/<name>_report.md.
-    All fields shown; empty ones marked *(not answered)* / *(empty)*.
+    Write a Markdown report to the session directory.
+
+    clean=False (default): writes *_report.md with all fields shown.
+    clean=True: writes *_clean.md with only fields that have data.
     Returns the output path, or empty string on failure.
     """
     import time as _time
@@ -1346,10 +941,12 @@ def export_session_report(session_file: str) -> str:  # noqa: C901
 
     session_dir  = Path(session_file).parent
     session_name = data.get("session_name", "session")
-    out_path     = session_dir / f"{session_name}_report.md"
+    out_name     = f"{session_name}_clean.md" if clean else f"{session_name}_report.md"
+    out_path     = session_dir / out_name
 
     a = data.get("assessment", {})
     lines: list[str] = []
+    _pending: list[str] = []  # buffered section/sub headers waiting for content
 
     # ── helpers ────────────────────────────────────────────────────────────
     def _v(val) -> str:
@@ -1359,27 +956,66 @@ def export_session_report(session_file: str) -> str:  # noqa: C901
         s = str(val).strip()
         return s if s else "*(empty)*"
 
+    def _emit(*ls: str) -> None:
+        if _pending:
+            lines.extend(_pending)
+            _pending.clear()
+        lines.extend(ls)
+
     def sec(title):
-        lines.append(f"\n---\n\n## {title}\n")
+        if clean:
+            if title == "Body Chart Summary":
+                _pending[:] = []  # suppress entirely in clean mode
+                return
+            # Strip "Section N: " prefix
+            clean_title = re.sub(r'^Section \d+:\s*', '', title)
+            if clean_title != title:
+                # Section 1 (Consent) — emit only a divider, no heading
+                if title.startswith("Section 1:"):
+                    _pending[:] = ["\n---\n"]
+                else:
+                    _pending[:] = [f"\n---\n\n## {clean_title}\n"]
+            else:
+                _pending[:] = [f"\n---\n\n## {title}\n"]
+        else:
+            lines.append(f"\n---\n\n## {title}\n")
 
     def sub(title):
-        lines.append(f"\n### {title}\n")
+        clean_title = title.replace(" (ICE+)", "") if clean else title
+        if clean:
+            while _pending and _pending[-1].lstrip().startswith("### "):
+                _pending.pop()
+            _pending.append(f"\n### {clean_title}\n")
+        else:
+            lines.append(f"\n### {title}\n")
+
+    def _empty(val) -> bool:
+        if val is None:
+            return True
+        if isinstance(val, str) and not val.strip():
+            return True
+        return False
 
     def f(fid, d):
-        lines.append(f"**{_label(fid)}:** {_v(d.get(fid))}")
+        val = d.get(fid)
+        if clean and _empty(val):
+            return
+        _emit(f"**{_label(fid)}:** {_v(val)}")
 
     def txt(fid, d):
         val = (d.get(fid) or "").strip()
+        if clean and not val:
+            return
         label = _label(fid)
         if val and "\n" in val:
-            lines.append(f"**{label}:**  ")
+            _emit(f"**{label}:**  ")
             for row in val.split("\n"):
-                lines.append(row)
-            lines.append("")
+                _emit((row + "  ") if (clean and row.strip()) else row)
+            _emit("")
         elif val:
-            lines.append(f"**{label}:** {val}")
+            _emit(f"**{label}:** {val}")
         else:
-            lines.append(f"**{label}:** *(empty)*")
+            _emit(f"**{label}:** *(empty)*")
 
     # ── header ──────────────────────────────────────────────────────────────
     c_hdr = a.get("consent", {}) or {}
@@ -1388,13 +1024,15 @@ def export_session_report(session_file: str) -> str:  # noqa: C901
     date_str = _time.strftime("%d %b %Y %H:%M", _time.localtime(created)) if created else "*(unknown)*"
     regions  = ", ".join(data.get("regions", [])) or "*(not set)*"
 
-    lines.append("# Physiotherapy Assessment — Full Record")
-    lines.append("")
-    lines.append(f"**Patient:** {preferred_name}  ")
-    lines.append(f"**Date:** {date_str}  ")
-    lines.append(f"**Region:** {regions}  ")
-    lines.append(f"**Session ID:** {data.get('session_name', '')}  ")
-    lines.append("")
+    if clean:
+        lines.extend([f"**Date:** {date_str}  ", ""])
+    else:
+        lines.extend(["# Physiotherapy Assessment — Full Record", "",
+                      f"**Patient:** {preferred_name}  ",
+                      f"**Date:** {date_str}  ",
+                      f"**Region:** {regions}  ",
+                      f"**Session ID:** {data.get('session_name', '')}  ",
+                      ""])
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 1: CONSENT & SETUP
@@ -1616,9 +1254,9 @@ def export_session_report(session_file: str) -> str:  # noqa: C901
             timing   = (med.get("timing", "") or "").strip()
             comments = (med.get("comments", "") or "").strip()
             med_rows.append([str(i), name or "—", dose or "—", timing or "—", comments or "—"])
-        lines.extend(_md_table(["#", "Name", "Dose", "Timing", "Comments"], med_rows))
-    else:
-        lines.append("*(none recorded)*")
+        _emit(*_md_table(["#", "Name", "Dose", "Timing", "Comments"], med_rows))
+    elif not clean:
+        _emit("*(none recorded)*")
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 4: PAIN CLASSIFICATION
@@ -1777,12 +1415,15 @@ def export_session_report(session_file: str) -> str:  # noqa: C901
     sub("Hypothesis Testing")
     hyp_rows = []
     for i in range(3):
-        measure   = (om.get(f"hyp_{i}_measure",   "") or "").strip() or "—"
-        baseline  = (om.get(f"hyp_{i}_baseline",  "") or "").strip() or "—"
-        interval  = (om.get(f"hyp_{i}_interval",  "") or "").strip() or "—"
-        rationale = (om.get(f"hyp_{i}_rationale", "") or "").strip() or "—"
-        hyp_rows.append([str(i + 1), measure, baseline, interval, rationale])
-    lines.extend(_md_table(["#", "Measure", "Baseline", "Interval", "Rationale"], hyp_rows))
+        measure   = (om.get(f"hyp_{i}_measure",   "") or "").strip()
+        baseline  = (om.get(f"hyp_{i}_baseline",  "") or "").strip()
+        interval  = (om.get(f"hyp_{i}_interval",  "") or "").strip()
+        rationale = (om.get(f"hyp_{i}_rationale", "") or "").strip()
+        if clean and not any([measure, baseline, interval, rationale]):
+            continue
+        hyp_rows.append([str(i + 1), measure or "—", baseline or "—", interval or "—", rationale or "—"])
+    if hyp_rows:
+        _emit(*_md_table(["#", "Measure", "Baseline", "Interval", "Rationale"], hyp_rows))
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 6: DIAGNOSIS
@@ -1990,26 +1631,32 @@ def export_session_report(session_file: str) -> str:  # noqa: C901
     notes = (sp.get("notes") or "").strip()
     if notes:
         for row in notes.split("\n"):
-            lines.append(row)
-    else:
-        lines.append("*(empty)*")
+            _emit((row + "  ") if (clean and row.strip()) else row)
+    elif not clean:
+        _emit("*(empty)*")
 
     # ════════════════════════════════════════════════════════════════════════
-    # BODY CHART SUMMARY
+    # BODY CHART SUMMARY — omitted in clean mode
     # ════════════════════════════════════════════════════════════════════════
-    subj_chart = data.get("subjective", {}) or {}
-    obj_chart  = data.get("objective",  {}) or {}
-    sec("Body Chart Summary")
-    lines.append(f"**Symptom strokes drawn:** {len(subj_chart.get('strokes', []))}")
-    lines.append(f"**Note annotations:** {len(subj_chart.get('notes', []))}")
-    lines.append(f"**Arrows:** {len(subj_chart.get('arrows', []))}")
-    lines.append(f"**Objective zones:** {len(obj_chart.get('zones', []))}")
-    lines.append(f"**Measurement points (PPT):** {len(obj_chart.get('points', []))}")
+    if not clean:
+        subj_chart = data.get("subjective", {}) or {}
+        obj_chart  = data.get("objective",  {}) or {}
+        sec("Body Chart Summary")
+        n_strokes = len(subj_chart.get("strokes", []))
+        n_notes   = len(subj_chart.get("notes", []))
+        n_arrows  = len(subj_chart.get("arrows", []))
+        n_zones   = len(obj_chart.get("zones", []))
+        n_points  = len(obj_chart.get("points", []))
+        _emit(f"**Symptom strokes drawn:** {n_strokes}",
+              f"**Note annotations:** {n_notes}",
+              f"**Arrows:** {n_arrows}",
+              f"**Objective zones:** {n_zones}",
+              f"**Measurement points (PPT):** {n_points}")
 
     # ════════════════════════════════════════════════════════════════════════
     # OBJECTIVE EXAMINATION
     # ════════════════════════════════════════════════════════════════════════
-    obj_lines = _render_objective_md(obj_assessment)
+    obj_lines = _render_objective_md(obj_assessment, clean=clean)
     if obj_lines:
         lines.append("")
         lines.append("---")
@@ -2025,48 +1672,6 @@ def export_session_report(session_file: str) -> str:  # noqa: C901
         logger.error(f"export_session_report write failed: {e}")
         return ""
 
-
-# ---------------------------------------------------------------------------
-# Scratchpad load / save
-# ---------------------------------------------------------------------------
-
-def load_scratchpad(session_file: str) -> dict:
-    """Load scratchpad data from session JSON file."""
-    path = Path(session_file)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        return data.get("assessment", {}).get("scratchpad", {})
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse session file {session_file}: {e}")
-        return {}
-
-
-def save_scratchpad(session_file: str, scratchpad: dict) -> bool:
-    """Merge scratchpad data into session JSON, preserving all other sections."""
-    path = Path(session_file)
-    try:
-        if path.exists():
-            data = json.loads(path.read_text())
-        else:
-            data = {}
-        if "assessment" not in data:
-            data["assessment"] = {}
-        data["assessment"]["scratchpad"] = scratchpad
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-        logger.debug(f"Saved scratchpad to {session_file}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save scratchpad to {session_file}: {e}")
-        return False
-
-
-# ---------------------------------------------------------------------------
-# Unified all-sections save
-# ---------------------------------------------------------------------------
 
 def save_all_sections(
     session_file: str,
@@ -2550,13 +2155,12 @@ def _val_raw(val) -> str:
     return str(val)
 
 
-def export_raw_report(session_data: dict) -> str:  # noqa: C901
+def export_raw_report(session_data: dict, clean: bool = False) -> str:  # noqa: C901
     """
-    Generate a complete plain-text raw export of ALL session fields.
+    Generate a plain-text export of session fields.
 
-    Every field from every section (01→07 + scratchpad + body chart) is
-    enumerated explicitly in UI order. Unanswered fields show "(not answered)"
-    so nothing is silently omitted.
+    clean=False (default): every field shown; unanswered fields show "(not answered)".
+    clean=True: only fields with real data; empty fields and their headers are omitted.
     """
     import time as _time
 
@@ -2564,40 +2168,61 @@ def export_raw_report(session_data: dict) -> str:  # noqa: C901
     SEP2 = "─" * 60
 
     lines: list[str] = []
+    _pending: list[str] = []  # buffered section/sub headers waiting for content
     a = session_data.get("assessment", {})
 
     # ── helpers ─────────────────────────────────────────────────────────────
 
+    def _emit(*ls: str) -> None:
+        if _pending:
+            lines.extend(_pending)
+            _pending.clear()
+        lines.extend(ls)
+
     def sec(title: str) -> None:
-        lines.append("")
-        lines.append(SEP)
-        lines.append(title)
-        lines.append(SEP)
+        if clean:
+            _pending[:] = ["", SEP, title, SEP]
+        else:
+            lines.extend(["", SEP, title, SEP])
 
     def sub(title: str) -> None:
-        lines.append(f"  — {title} —")
+        if clean:
+            while _pending and _pending[-1].lstrip().startswith("— "):
+                _pending.pop()
+            _pending.append(f"  — {title} —")
+        else:
+            lines.append(f"  — {title} —")
+
+    def _empty(val) -> bool:
+        if val is None:
+            return True
+        if isinstance(val, str) and not val.strip():
+            return True
+        return False
 
     def f(fid: str, d: dict) -> None:
-        """Emit one field. Multi-line text gets indented continuation lines."""
         val = d.get(fid)
+        if clean and _empty(val):
+            return
         label = _label(fid)
         if isinstance(val, str) and "\n" in val.strip():
-            lines.append(f"  {label}:")
+            _emit(f"  {label}:")
             for row in val.strip().split("\n"):
-                lines.append(f"    {row}" if row.strip() else "")
+                _emit(f"    {row}" if row.strip() else "")
         else:
-            lines.append(f"  {label}: {_val_raw(val)}")
+            _emit(f"  {label}: {_val_raw(val)}")
 
     def txt(fid: str, d: dict) -> None:
-        """Text field — always multi-line block even if single line."""
         val = (d.get(fid) or "").strip()
+        if clean and not val:
+            return
         label = _label(fid)
-        lines.append(f"  {label}:")
+        _emit(f"  {label}:")
         if val:
             for row in val.split("\n"):
-                lines.append(f"    {row}")
+                _emit(f"    {row}")
         else:
-            lines.append("    (empty)")
+            _emit("    (empty)")
 
     # ── header ──────────────────────────────────────────────────────────────
 
@@ -2608,13 +2233,9 @@ def export_raw_report(session_data: dict) -> str:  # noqa: C901
     date_str       = _time.strftime("%d %b %Y %H:%M", _time.localtime(created)) if created else "(unknown)"
     regions        = ", ".join(session_data.get("regions", [])) or "(not set)"
 
-    lines.append(SEP)
-    lines.append("PHYSIOTHERAPY ASSESSMENT — FULL RAW DATA")
-    lines.append(f"Patient:    {preferred_name}")
-    lines.append(f"Date:       {date_str}")
-    lines.append(f"Region:     {regions}")
-    lines.append(f"Session ID: {session_name}")
-    lines.append(SEP)
+    title = "PHYSIOTHERAPY ASSESSMENT — ENTERED DATA" if clean else "PHYSIOTHERAPY ASSESSMENT — FULL RAW DATA"
+    lines.extend([SEP, title, f"Patient:    {preferred_name}", f"Date:       {date_str}",
+                  f"Region:     {regions}", f"Session ID: {session_name}", SEP])
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 1: CONSENT & SETUP
@@ -2838,9 +2459,9 @@ def export_raw_report(session_data: dict) -> str:  # noqa: C901
             med_str  = "  ".join(parts) if parts else "(unnamed)"
             if comments:
                 med_str += f"  [{comments}]"
-            lines.append(f"  {i}. {med_str}")
-    else:
-        lines.append("  (none recorded)")
+            _emit(f"  {i}. {med_str}")
+    elif not clean:
+        _emit("  (none recorded)")
 
     # ════════════════════════════════════════════════════════════════════════
     # SECTION 4: PAIN CLASSIFICATION
@@ -3002,7 +2623,9 @@ def export_raw_report(session_data: dict) -> str:  # noqa: C901
         baseline  = (om.get(f"hyp_{i}_baseline",  "") or "").strip()
         interval  = (om.get(f"hyp_{i}_interval",  "") or "").strip()
         rationale = (om.get(f"hyp_{i}_rationale", "") or "").strip()
-        lines.append(
+        if clean and not any([measure, baseline, interval, rationale]):
+            continue
+        _emit(
             f"  Row {i+1}: {measure or '—'}"
             f"  |  baseline: {baseline or '—'}"
             f"  |  interval: {interval or '—'}"
@@ -3215,15 +2838,15 @@ def export_raw_report(session_data: dict) -> str:  # noqa: C901
     notes = (sp.get("notes") or "").strip()
     if notes:
         for row in notes.split("\n"):
-            lines.append(f"  {row}")
-    else:
-        lines.append("  (empty)")
+            _emit(f"  {row}")
+    elif not clean:
+        _emit("  (empty)")
 
     # ════════════════════════════════════════════════════════════════════════
     # OBJECTIVE EXAMINATION
     # ════════════════════════════════════════════════════════════════════════
     obj_assessment = session_data.get("objective_assessment", {}) or {}
-    _render_objective_raw(obj_assessment, lines, SEP, SEP2)
+    _render_objective_raw(obj_assessment, lines, SEP, SEP2, clean=clean)
 
     # ════════════════════════════════════════════════════════════════════════
     # BODY CHART SUMMARY
@@ -3236,29 +2859,28 @@ def export_raw_report(session_data: dict) -> str:  # noqa: C901
     n_arrows  = len(subj_chart.get("arrows",  []))
     n_zones   = len(obj_chart.get("zones",    []))
     n_points  = len(obj_chart.get("points",   []))
-    lines.append(f"  Symptom strokes drawn:    {n_strokes}")
-    lines.append(f"  Note annotations:         {n_notes}")
-    lines.append(f"  Arrows:                   {n_arrows}")
-    lines.append(f"  Objective zones:          {n_zones}")
-    lines.append(f"  Measurement points (PPT): {n_points}")
+    if not clean or any([n_strokes, n_notes, n_arrows, n_zones, n_points]):
+        _emit(f"  Symptom strokes drawn:    {n_strokes}",
+              f"  Note annotations:         {n_notes}",
+              f"  Arrows:                   {n_arrows}",
+              f"  Objective zones:          {n_zones}",
+              f"  Measurement points (PPT): {n_points}")
 
     # symptom types from the chart watcher summary (if present)
     body_chart = session_data.get("body_chart") or session_data.get("assessment", {}).get("body_chart")
     if isinstance(body_chart, dict):
         sym_types = body_chart.get("symptom_types_used", [])
         if sym_types:
-            lines.append(f"  Symptom types used: {', '.join(str(t) for t in sym_types)}")
+            _emit(f"  Symptom types used: {', '.join(str(t) for t in sym_types)}")
         views = body_chart.get("views_drawn", [])
         if views:
-            lines.append(f"  Views drawn: {', '.join(str(v) for v in views)}")
+            _emit(f"  Views drawn: {', '.join(str(v) for v in views)}")
 
     # ── footer ──────────────────────────────────────────────────────────────
-    lines.append("")
-    lines.append(SEP)
-    lines.append("END OF RAW ASSESSMENT DATA")
-    lines.append(f"Generated: {_time.strftime('%d %b %Y %H:%M:%S')}")
-    lines.append("For clinical use only — verify all entries before use")
-    lines.append(SEP)
+    footer_title = "END OF ASSESSMENT DATA" if clean else "END OF RAW ASSESSMENT DATA"
+    lines.extend(["", SEP, footer_title,
+                  f"Generated: {_time.strftime('%d %b %Y %H:%M:%S')}",
+                  "For clinical use only — verify all entries before use", SEP])
 
     return "\n".join(lines)
 
@@ -3301,6 +2923,79 @@ def save_raw_report(session_file: str) -> str:
         return str(out_path)
     except Exception as e:
         logger.error(f"save_raw_report: write failed: {e}")
+        return ""
+
+
+def save_clean_reports(session_file: str) -> None:
+    """
+    Generate and save *_clean.txt and *_clean.md containing only fields with data.
+
+    Called from _do_save() alongside save_raw_report() and export_session_report().
+    Errors are logged but never raised — clean reports are non-critical.
+    """
+    try:
+        data = json.loads(Path(session_file).read_text()) if Path(session_file).exists() else {}
+    except Exception as e:
+        logger.error(f"save_clean_reports: failed to read session: {e}")
+        return
+
+    assess_p = assessment_path(session_file)
+    if assess_p.exists():
+        try:
+            assess_data = json.loads(assess_p.read_text())
+            data["assessment"] = assess_data.get("assessment", data.get("assessment", {}))
+            data.setdefault("sections_complete", assess_data.get("sections_complete", {}))
+        except Exception:
+            pass
+
+    obj_file_data = load_objective(session_file)
+    data["objective_assessment"] = obj_file_data.get("assessment", {})
+
+    session_name = data.get("session_name", "session")
+    session_dir  = Path(session_file).parent
+
+    try:
+        content = export_raw_report(data, clean=True)
+        clean_txt = session_dir / f"{session_name}_clean.txt"
+        clean_txt.write_text(content, encoding="utf-8")
+        logger.debug(f"Clean txt written to {clean_txt}")
+    except Exception as e:
+        logger.error(f"save_clean_reports: txt write failed: {e}")
+
+    export_session_report(session_file, clean=True)
+
+
+def save_docx_report(session_file: str) -> str:
+    """
+    Convert *_clean.md to *_clean.docx using pandoc.
+
+    Requires pandoc on PATH. Silent no-op if pandoc is absent.
+    Returns the output path on success, empty string on failure.
+    """
+    p = Path(session_file)
+    session_name = p.stem.replace("_session", "")
+    md_path   = p.parent / f"{session_name}_clean.md"
+    docx_path = p.parent / f"{session_name}_clean.docx"
+
+    if not md_path.exists():
+        logger.warning(f"save_docx_report: {md_path} not found — run save_clean_reports first")
+        return ""
+
+    try:
+        result = subprocess.run(
+            ["pandoc", str(md_path), "-o", str(docx_path)],
+            capture_output=True, timeout=30,
+        )
+        if result.returncode == 0:
+            logger.debug(f"Docx written to {docx_path}")
+            return str(docx_path)
+        logger.error(f"pandoc failed: {result.stderr.decode().strip()}")
+        return ""
+    except FileNotFoundError:
+        logger.warning("pandoc not found — skipping docx generation")
+        return ""
+    except Exception as e:
+        logger.error(f"save_docx_report: {e}")
         return ""
 
 
