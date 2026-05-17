@@ -413,6 +413,29 @@ static json_object *notes_to_json(AppState *app,
     return arr;
 }
 
+/* Cluster IDs with no note within NOTE_ASSOC_THRESHOLD_BU — the TUI misc bucket. */
+static json_object *misc_cluster_ids_json(AppState *app,
+                                           const ClusterMeta *clusters,
+                                           int n_clusters)
+{
+    double thresh2 = NOTE_ASSOC_THRESHOLD_BU * NOTE_ASSOC_THRESHOLD_BU;
+    json_object *arr = json_object_new_array();
+    for (int ci = 0; ci < n_clusters; ci++) {
+        const ClusterMeta *m = &clusters[ci];
+        gboolean claimed = FALSE;
+        for (int ni = 0; ni < app->note_count && !claimed; ni++) {
+            NoteAnnotation *na = &app->notes[ni];
+            if (na->view != m->view) continue;
+            double dx = m->centroid_bx - na->bx;
+            double dy = m->centroid_by - na->by;
+            if (dx * dx + dy * dy <= thresh2) claimed = TRUE;
+        }
+        if (!claimed)
+            json_object_array_add(arr, json_object_new_int(m->id));
+    }
+    return arr;
+}
+
 /* ── Save ─────────────────────────────────────────────────────────────────── */
 
 gboolean persistence_save(AppState *app)
@@ -448,7 +471,7 @@ gboolean persistence_save(AppState *app)
     json_object *root = json_object_new_object();
 
     /* Metadata */
-    json_object_object_add(root, "version",       json_object_new_int(2));
+    json_object_object_add(root, "version",       json_object_new_int(3));
     json_object_object_add(root, "patient_id",    json_object_new_string(app->patient_id));
     json_object_object_add(root, "session_label", json_object_new_string(app->session_label));
     json_object_object_add(root, "session_name",  json_object_new_string(app->session_name));
@@ -473,6 +496,8 @@ gboolean persistence_save(AppState *app)
         strokes_to_json(app->strokes));
     json_object_object_add(subj, "stroke_clusters",
         clusters_meta_to_json(clusters, n_clusters));
+    json_object_object_add(subj, "misc_cluster_ids",
+        misc_cluster_ids_json(app, clusters, n_clusters));
     json_object_object_add(subj, "notes",
         notes_to_json(app, clusters, n_clusters));
     json_object_object_add(subj, "arrows",          arrows_to_json(app));
@@ -1066,7 +1091,7 @@ gboolean persistence_write_session_current(AppState *app)
 
     json_object *root = json_object_new_object();
 
-    json_object_object_add(root, "schema_version", json_object_new_int(3));
+    json_object_object_add(root, "schema_version", json_object_new_int(4));
     json_object_object_add(root, "gtk_pid", json_object_new_int((int)getpid()));
 
     if (app->session_file[0])
