@@ -95,6 +95,15 @@ def _fmt_nature(note: dict[str, Any], assoc_clusters: list[dict[str, Any]]) -> s
     if quality_words:
         parts.append(", ".join(quality_words))
 
+    # Severity range (NRS 0–10); omit if both are zero (not set)
+    low  = int(note.get("low",  0))
+    high = int(note.get("high", 0))
+    if high > 0 or low > 0:
+        if low == high:
+            parts.append(f"{high}/10")
+        else:
+            parts.append(f"{low}–{high}/10")
+
     return "; ".join(parts)
 
 
@@ -165,7 +174,10 @@ def build_prefill(session_json: dict[str, Any]) -> dict[str, Any]:
     notes_out: list[dict[str, Any]] = []
     for note in sorted(subj.get("notes", []), key=lambda n: n.get("number", 0)):
         assoc_ids   = [int(i) for i in note.get("associated_cluster_ids", [])]
-        assoc_cls   = [clusters_by_id[i] for i in assoc_ids if i in clusters_by_id]
+        assoc_cls   = [
+            clusters_by_id[i] for i in assoc_ids
+            if i in clusters_by_id and int(clusters_by_id[i].get("type", -1)) != 5
+        ]
         dist_labels = [str(r) for r in note.get("distribution_labels", [])]
 
         notes_out.append({
@@ -177,9 +189,12 @@ def build_prefill(session_json: dict[str, Any]) -> dict[str, Any]:
             "easing_factors":        "",
         })
 
-    # Misc clusters (no nearby note)
+    # Misc clusters (no nearby note) — exclude type 5 (SYMPTOM_TICK = zone clear marker)
     misc_ids = [int(i) for i in subj.get("misc_cluster_ids", [])]
-    misc_cls = [clusters_by_id[i] for i in misc_ids if i in clusters_by_id]
+    misc_cls = [
+        clusters_by_id[i] for i in misc_ids
+        if i in clusters_by_id and int(clusters_by_id[i].get("type", -1)) != 5
+    ]
 
     return {
         "notes":     notes_out,

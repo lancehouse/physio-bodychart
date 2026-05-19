@@ -55,6 +55,8 @@ class SensorySection(BaseSection):
     and will be linked to objective body-chart findings in a future phase.
     """
 
+    _nav_include_inputs = True  # include Input (detail/value fields) in arrow-key nav
+
     class FieldChanged(Message):
         pass
 
@@ -65,7 +67,7 @@ class SensorySection(BaseSection):
         padding: 0 1 2 1;
     }
     SensorySection .section_title     { text-style: bold; margin-bottom: 0; }
-    SensorySection .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
 
     /* PPT row — label + gang + gap + detail input */
     SensorySection .ppt_row    { layout: horizontal; height: 3; width: 100%; margin-bottom: 0; }

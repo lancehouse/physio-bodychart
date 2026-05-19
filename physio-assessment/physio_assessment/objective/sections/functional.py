@@ -5,6 +5,7 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Label, Static, TextArea
 
+from ...nav import escape_to_neighbor
 from ...sections.base import BaseSection
 from ...widgets import GridInput, RadioGroup
 
@@ -61,6 +62,8 @@ _CAP_ROWS: list[tuple[str, str, str]] = [
 class FunctionalSection(BaseSection):
     """07 Functional — movement obs, balance (Steffen 2002), timed capability measures."""
 
+    _nav_include_inputs = True  # include GridInput (balance/timed rows) in arrow-key nav
+
     class FieldChanged(Message):
         pass
 
@@ -71,7 +74,7 @@ class FunctionalSection(BaseSection):
         padding: 0 1 2 1;
     }
     FunctionalSection .section_title     { text-style: bold; margin-bottom: 0; }
-    FunctionalSection .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
 
     /* Single-gang obs rows — label + gang */
     FunctionalSection .obs_row { layout: horizontal; height: 3; width: 100%; margin-bottom: 0; }
@@ -172,15 +175,16 @@ class FunctionalSection(BaseSection):
             self._grid.append([fid])
             self._grid_pos[fid] = (row_idx, 0)
 
-    def _focus_nearest(self, row: int, col: int) -> None:
+    def _focus_nearest(self, row: int, col: int) -> bool:
         if row < 0 or row >= len(self._grid):
-            return
+            return False
         grid_row = self._grid[row]
         col = max(0, min(col, len(grid_row) - 1))
         try:
             self.query_one(f"#{grid_row[col]}").focus()
+            return True
         except Exception:
-            pass
+            return False
 
     @on(GridInput.Navigate)
     def _on_grid_navigate(self, event: GridInput.Navigate) -> None:
@@ -188,14 +192,17 @@ class FunctionalSection(BaseSection):
         if focused is None or focused.id not in self._grid_pos:
             return
         row, col = self._grid_pos[focused.id]
+        navigated = False
         if event.direction == "up":
-            self._focus_nearest(row - 1, col)
+            navigated = self._focus_nearest(row - 1, col)
         elif event.direction == "down":
-            self._focus_nearest(row + 1, col)
+            navigated = self._focus_nearest(row + 1, col)
         elif event.direction == "left" and col > 0:
-            self._focus_nearest(row, col - 1)
+            navigated = self._focus_nearest(row, col - 1)
         elif event.direction == "right" and col < len(self._grid[row]) - 1:
-            self._focus_nearest(row, col + 1)
+            navigated = self._focus_nearest(row, col + 1)
+        if not navigated:
+            escape_to_neighbor(self, focused, event.direction)
         event.stop()
 
     # ------------------------------------------------------------------

@@ -25,12 +25,6 @@ class ConsentSection(BaseSection):
         margin-bottom: 0;
     }
 
-    .subsection_header {
-        text-style: bold;
-        color: $primary;
-        margin-top: 1;
-        margin-bottom: 0;
-    }
 
     /* Paired toggle button rows */
     .btn_row {

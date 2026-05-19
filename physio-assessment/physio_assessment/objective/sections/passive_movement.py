@@ -85,7 +85,7 @@ class PassiveMovementSection(BaseSection):
         padding: 0 1 2 1;
     }
     PassiveMovementSection .section_title     { text-style: bold; margin-bottom: 0; }
-    PassiveMovementSection .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
 
     /* OP table
        label=16  ef-gang=24  gap=2  resp-gang=24  */

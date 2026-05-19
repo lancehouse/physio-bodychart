@@ -31,7 +31,7 @@ class ScratchpadSection(BaseSection):
     #scratchpad_text {
         width: 100%;
         height: auto;
-        min-height: 40;
+        min-height: 15;
     }
     """
 

@@ -6,6 +6,7 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Label, Static, TextArea
 
+from ...nav import escape_to_neighbor
 from ...sections.base import BaseSection
 from ...widgets import CheckButton, GridInput, RadioGroup
 
@@ -79,7 +80,7 @@ class MuscleSection(BaseSection):
         padding: 0 1 2 1;
     }
     MuscleSection .section_title     { text-style: bold; margin-bottom: 0; }
-    MuscleSection .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
 
     /* Muscle length / activation header + rows */
     MuscleSection .rm_hdr     { layout: horizontal; height: 1; width: 100%; color: $text-muted; }
@@ -225,18 +226,37 @@ class MuscleSection(BaseSection):
         if focused is None or focused.id not in self._hip_grid_pos:
             return
         row, col = self._hip_grid_pos[focused.id]
+        navigated = False
         if event.direction == "up":
             target_row = row - 1
+            if 0 <= target_row < len(self._hip_grid):
+                try:
+                    self.query_one(f"#{self._hip_grid[target_row][col]}").focus()
+                    navigated = True
+                except Exception:
+                    pass
         elif event.direction == "down":
             target_row = row + 1
-        else:
-            event.stop()
-            return
-        if 0 <= target_row < len(self._hip_grid):
+            if 0 <= target_row < len(self._hip_grid):
+                try:
+                    self.query_one(f"#{self._hip_grid[target_row][col]}").focus()
+                    navigated = True
+                except Exception:
+                    pass
+        elif event.direction == "left" and col > 0:
             try:
-                self.query_one(f"#{self._hip_grid[target_row][col]}").focus()
+                self.query_one(f"#{self._hip_grid[row][col - 1]}").focus()
+                navigated = True
             except Exception:
                 pass
+        elif event.direction == "right" and col < len(self._hip_grid[row]) - 1:
+            try:
+                self.query_one(f"#{self._hip_grid[row][col + 1]}").focus()
+                navigated = True
+            except Exception:
+                pass
+        if not navigated:
+            escape_to_neighbor(self, focused, event.direction)
         event.stop()
 
     # ------------------------------------------------------------------

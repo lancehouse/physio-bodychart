@@ -94,10 +94,6 @@ class PainClassificationSection(BaseSection):
         padding: 0 1;
     }
     .section_title { text-style: bold; color: $text; margin-bottom: 0; }
-    .subsection_header {
-        text-style: bold; color: $primary;
-        margin-top: 1; margin-bottom: 0;
-    }
     .subgroup_header { color: $text-muted; margin-top: 0; margin-bottom: 0; text-style: italic; }
     .reference_note  { color: $text-muted; margin-bottom: 0; }
 
@@ -334,7 +330,7 @@ class PainClassificationSection(BaseSection):
         try:
             target = self.query_one(f"#{anchor_id}")
             self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(
-                target, top=True
+                target, top=True, animate=False
             )
         except Exception:
             pass

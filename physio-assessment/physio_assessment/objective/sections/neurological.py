@@ -87,7 +87,7 @@ class NeurologicalSection(BaseSection):
         padding: 0 1 2 1;
     }
     NeurologicalSection .section_title     { text-style: bold; margin-bottom: 0; }
-    NeurologicalSection .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
 
     /* Reflex / myotome / dermatome L|R grid
        label=18  L-gang(auto)  gap=2  R-gang(auto)                          */

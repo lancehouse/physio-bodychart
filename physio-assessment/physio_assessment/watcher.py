@@ -52,7 +52,7 @@ class BodyChartWatcher:
         """Start the polling loop."""
         if self._task:
             return
-        self._task = asyncio.get_event_loop().create_task(self._poll_loop())
+        self._task = asyncio.create_task(self._poll_loop())
 
     def stop(self):
         """Stop the polling loop."""

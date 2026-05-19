@@ -1,6 +1,7 @@
 """Subjective Examination section (core/02)."""
 
 import json
+from pathlib import Path
 from textual.app import ComposeResult, on
 from textual.containers import Vertical, Horizontal, ScrollableContainer
 from textual.widgets import Label, Input, TextArea, Button
@@ -50,12 +51,6 @@ class SubjectiveSection(BaseSection):
         margin-bottom: 0;
     }
 
-    .subsection_header {
-        text-style: bold;
-        color: $primary;
-        padding-top: 1;
-        margin-bottom: 0;
-    }
 
     /* Label + field on one horizontal row */
     .field_row {
@@ -103,7 +98,7 @@ class SubjectiveSection(BaseSection):
         margin: 0 0 0 0;
     }
 
-    /* Per-note slots */
+    /* Per-note slots — hidden until load() reveals them */
     .note_slot {
         width: 100%;
         height: auto;
@@ -111,6 +106,7 @@ class SubjectiveSection(BaseSection):
         padding-left: 1;
         margin-top: 1;
         margin-bottom: 0;
+        display: none;
     }
 
     .note_header {
@@ -156,7 +152,7 @@ class SubjectiveSection(BaseSection):
             yield CheckButton("Body chart completed", id="body_chart_completed",
                               classes="solo_btn")
 
-            # Pre-compose all note slots; on_mount() hides them all.
+            # Pre-compose all note slots (hidden via CSS).
             # load() reveals and populates only those matching the body chart.
             for i in range(MAX_NOTE_SLOTS):
                 with Vertical(id=f"note_slot_{i}", classes="note_slot"):
@@ -327,21 +323,24 @@ class SubjectiveSection(BaseSection):
             with Horizontal(classes="field_row"):
                 yield Label("Nap duration\n(minutes):")
                 yield Input(id="nap_duration", placeholder="minutes")
+            # ── 24Hr Pattern ──────────────────────────────────────────
+            yield Label("— 24Hr Pattern —", classes="subsection_header",
+                        id="subj_24hr")
+            with Horizontal(classes="field_row"):
+                yield Label("AM:")
+                yield TextArea(id="hr24_am", language="plain")
+            with Horizontal(classes="field_row"):
+                yield Label("During day:")
+                yield TextArea(id="hr24_day", language="plain")
+            with Horizontal(classes="field_row"):
+                yield Label("PM:")
+                yield TextArea(id="hr24_pm", language="plain")
+            with Horizontal(classes="field_row"):
+                yield Label("Nocte:")
+                yield TextArea(id="hr24_nocte", language="plain")
             with Horizontal(classes="field_row"):
                 yield Label("Energy levels\nby end of day:")
                 yield TextArea(id="energy_levels", language="plain")
-
-            # ── Behaviour ─────────────────────────────────────────────
-            yield Label("— Behaviour of Symptoms —", classes="subsection_header",
-                        id="subj_behaviour")
-            with Horizontal(classes="field_row"):
-                yield Label("Aggravating factors\n(general):")
-                yield TextArea(id="aggravating_factors", language="plain")
-            with Horizontal(classes="field_row"):
-                yield Label("Easing factors\n(general):")
-                yield TextArea(id="easing_factors", language="plain")
-            yield CheckButton("Mood influences pain", id="mood_influences",
-                              classes="solo_btn")
             with Horizontal(classes="field_row"):
                 yield Label("Daily pattern\ncomments:")
                 yield TextArea(id="daily_pattern_comments", language="plain")
@@ -349,6 +348,9 @@ class SubjectiveSection(BaseSection):
             # ── Psychosocial ──────────────────────────────────────────
             yield Label("— Psychosocial —", classes="subsection_header",
                         id="subj_psychosocial")
+            with Horizontal(classes="field_row"):
+                yield FlagButton("Mood influences pain", id="mood_influences")
+                yield TextArea(id="mood_text", language="plain")
             with Horizontal(classes="field_row"):
                 yield Label("Social situation\n(home / family):")
                 yield TextArea(id="social_situation", language="plain")
@@ -384,18 +386,46 @@ class SubjectiveSection(BaseSection):
                 yield TextArea(id="harm_action", language="plain")
 
     # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    def on_mount(self) -> None:
-        """Hide all note slots until load() is called with session data."""
-        for i in range(MAX_NOTE_SLOTS):
-            self.query_one(f"#note_slot_{i}").display = False
-        self.query_one("#misc_slot").display = False
-
-    # ------------------------------------------------------------------
     # Per-note slot management
     # ------------------------------------------------------------------
+
+    def refresh_from_chart(self, session_json: dict) -> None:
+        """Re-build note slots when the body chart changes, preserving clinician edits.
+
+        Reads current widget text as the 'saved' base so nothing typed is lost.
+        Call this from on_chart_update in tui.py.
+        """
+        from ..mapping import build_prefill
+
+        # Snapshot whatever the clinician has typed so far
+        live_note_fields: dict[str, dict] = {}
+        for i, sid in self._slot_to_stable_id.items():
+            try:
+                if not self.query_one(f"#note_slot_{i}").display:
+                    continue
+                live_note_fields[str(sid)] = {
+                    "loc":  self.query_one(f"#note_{i}_loc",  TextArea).text,
+                    "nat":  self.query_one(f"#note_{i}_nat",  TextArea).text,
+                    "agg":  self.query_one(f"#note_{i}_agg",  TextArea).text,
+                    "ease": self.query_one(f"#note_{i}_ease", TextArea).text,
+                }
+            except Exception:
+                pass
+        try:
+            if self.query_one("#misc_slot").display:
+                live_note_fields["misc_loc"] = self.query_one("#misc_loc", TextArea).text
+                live_note_fields["misc_nat"] = self.query_one("#misc_nat", TextArea).text
+        except Exception:
+            pass
+
+        prefill = build_prefill(session_json)
+        self._loading = True
+        try:
+            self._rebuild_note_slots(live_note_fields, prefill)
+        except Exception:
+            pass
+        finally:
+            self._loading = False
 
     def _rebuild_note_slots(self, saved_note_fields: dict, prefill: dict) -> None:
         """Show and populate note slots matching the current body chart state.
@@ -458,7 +488,7 @@ class SubjectiveSection(BaseSection):
         try:
             target = self.query_one(f"#{anchor_id}")
             self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(
-                target, top=True
+                target, top=True, animate=False
             )
             all_interactive = list(self.query("Input, TextArea, CheckButton, Button"))
             all_nodes       = list(self.query("*"))
@@ -495,8 +525,10 @@ class SubjectiveSection(BaseSection):
         "current_work_status", "current_duties",
         "bed_description", "sleep_position",
         "night_waking_frequency", "night_waking_reason", "morning_stiffness",
-        "nap_frequency", "energy_levels",
-        "aggravating_factors", "easing_factors", "daily_pattern_comments",
+        "nap_frequency",
+        "hr24_am", "hr24_day", "hr24_pm", "hr24_nocte",
+        "energy_levels", "daily_pattern_comments",
+        "mood_text",
         "social_situation", "financial_status", "cultural_considerations",
         "psychological_distress", "screening_tool",
         "harm_plan", "harm_means", "harm_intent", "harm_action",
@@ -566,16 +598,19 @@ class SubjectiveSection(BaseSection):
             if self.session_file:
                 try:
                     session_json = json.loads(
-                        open(self.session_file, encoding="utf-8").read()
+                        Path(self.session_file).read_text(encoding="utf-8")
                     )
                     prefill = build_prefill(session_json)
                 except Exception:
                     pass
 
-            self._rebuild_note_slots(
-                subjective.get("note_fields", {}),
-                prefill,
-            )
+            try:
+                self._rebuild_note_slots(
+                    subjective.get("note_fields", {}),
+                    prefill,
+                )
+            except Exception:
+                pass
 
             for fid in self._TOGGLE_FIELDS:
                 if fid in subjective:

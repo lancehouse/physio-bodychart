@@ -17,7 +17,6 @@ class PhysioAssessment(App):
 
     TITLE = "PhysioChart Assessment System"
     SUB_TITLE = "Specialist Physiotherapy Assessment & Report Generator"
-    ANIMATION_SPEED = 2.0
 
     BINDINGS = [
         ("ctrl+q", "quit",              "Quit"),
@@ -31,7 +30,8 @@ class PhysioAssessment(App):
         Binding("f6", "section_outcomes",         show=False, priority=True),
         Binding("f7", "section_diagnosis",        show=False, priority=True),
         Binding("f8", "section_barriers",         show=False, priority=True),
-        Binding("f9", "section_scratchpad",       show=False, priority=True),
+        Binding("f9", "section_rx_plan",          show=False, priority=True),
+        Binding("f10", "section_scratchpad",      show=False, priority=True),
         # Subjective subsection jump — Alt+letter (priority=True overrides TextArea)
         Binding("alt+s", "sub_symptoms",             show=False, priority=True),
         Binding("alt+h", "sub_history",              show=False, priority=True),
@@ -40,7 +40,7 @@ class PhysioAssessment(App):
         Binding("alt+a", "sub_activity",             show=False, priority=True),
         Binding("alt+w", "sub_work",                 show=False, priority=True),
         Binding("alt+e", "sub_sleep",                show=False, priority=True),
-        Binding("alt+v", "sub_behaviour",            show=False, priority=True),
+        Binding("alt+4", "sub_24hr",                 show=False, priority=True),
         Binding("alt+p", "sub_psychosocial",         show=False, priority=True),
         Binding("alt+r", "sub_risk",                 show=False, priority=True),
     ]
@@ -88,11 +88,6 @@ class PhysioAssessment(App):
         self.assessment_screen = assessment
         main.mount(assessment)
 
-    def on_session_list_screen_new_session_requested(self) -> None:
-        # New session creation requires a patient-ID dialog (not yet implemented).
-        # For now, just refresh the session list so the button doesn't crash.
-        self.show_session_list()
-
     async def action_show_session_list(self) -> None:
         if self.assessment_screen:
             try:
@@ -123,6 +118,7 @@ class PhysioAssessment(App):
     def action_section_outcomes(self):   self._goto_section("05_outcome_measures")
     def action_section_diagnosis(self):  self._goto_section("06_diagnosis")
     def action_section_barriers(self):   self._goto_section("07_barriers")
+    def action_section_rx_plan(self):    self._goto_section("08_rx_plan")
     def action_section_scratchpad(self): self._goto_section("scratchpad")
 
     # ------------------------------------------------------------------
@@ -142,7 +138,7 @@ class PhysioAssessment(App):
     def action_sub_activity(self):     self._goto_subjective_sub("subj_activity")
     def action_sub_work(self):         self._goto_subjective_sub("subj_work")
     def action_sub_sleep(self):        self._goto_subjective_sub("subj_sleep")
-    def action_sub_behaviour(self):    self._goto_subjective_sub("subj_behaviour")
+    def action_sub_24hr(self):         self._goto_subjective_sub("subj_24hr")
     def action_sub_psychosocial(self): self._goto_subjective_sub("subj_psychosocial")
     def action_sub_risk(self):         self._goto_subjective_sub("subj_suicide")
 

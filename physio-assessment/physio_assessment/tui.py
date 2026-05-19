@@ -33,6 +33,7 @@ from .storage import (
 from .assessment_view import AssessmentView
 
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,7 +133,6 @@ class SessionListScreen(Container):
         yield Label("PhysioChart Assessment", id="session_list_title")
         yield Input(placeholder="Search patients...", id="session_search")
         yield ScrollableContainer(id="sessions_view")
-        yield Button("+ New Session", id="new_session_btn", variant="primary")
         yield Button("Quit", id="quit_btn", variant="error")
 
     def on_mount(self) -> None:
@@ -195,13 +195,8 @@ class SessionListScreen(Container):
         self.on_session_selected(event.session_path)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "new_session_btn":
-            self.post_message(self.NewSessionRequested())
-        elif event.button.id == "quit_btn":
+        if event.button.id == "quit_btn":
             self.app.exit()
-
-    class NewSessionRequested(Message):
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +282,7 @@ class SubsectionNavBar(Static):
         ("",      "A", "ctivity",     "subj_activity"),
         ("",      "W", "ork",         "subj_work"),
         ("sl",    "E", "ep",          "subj_sleep"),
-        ("beha",  "V", "iour",        "subj_behaviour"),
+        ("",      "2", "4Hr",         "subj_24hr"),
         ("",      "P", "sychosocial", "subj_psychosocial"),
         ("",      "R", "isk",         "subj_suicide"),
     ]
@@ -339,10 +334,13 @@ class SubsectionNavBar(Static):
         ("Sleep/Soc",  "br_sleep"),
         ("Medical",    "br_medical"),
         ("Custom",     "br_custom"),
-        ("Treatment",  "br_treatment"),
-        ("Session 1",  "br_session1"),
-        ("Day 1",      "br_day1"),
-        ("Follow-Up",  "br_followup"),
+    ]
+
+    RX_PLAN_SUBS = [
+        ("Treatment",  "rp_treatment"),
+        ("Session 1",  "rp_session1"),
+        ("Day 1",      "rp_day1"),
+        ("Follow-Up",  "rp_followup"),
     ]
 
     DEFAULT_CSS = """
@@ -364,14 +362,11 @@ class SubsectionNavBar(Static):
         return t
 
     def compose(self) -> ComposeResult:
-        # Default: Subjective chips (bar is hidden until a section activates it)
-        for before, key, after, anchor_id in self.SUBJECTIVE_SUBS:
-            yield _NavChip(
-                self._make_label(before, key, after),
-                anchor_id=anchor_id,
-                section_widget_id="#section_02_subjective",
-                id=f"subnav_{anchor_id}",
-            )
+        # Intentionally empty — set_context() mounts chips on first navigation.
+        # Composing chips here would register their IDs, then set_context's
+        # remove_children() + mount() with the same IDs causes a silent collision.
+        return
+        yield  # make this a generator
 
     def set_context(self, section_id: str) -> None:
         """Swap chips to match the newly active section."""
@@ -382,7 +377,6 @@ class SubsectionNavBar(Static):
                     self._make_label(before, key, after),
                     anchor_id=anchor_id,
                     section_widget_id="#section_02_subjective",
-                    id=f"subnav_{anchor_id}",
                 ))
         elif section_id == "03_medical":
             for label, anchor_id in self.MEDICAL_SUBS:
@@ -390,7 +384,6 @@ class SubsectionNavBar(Static):
                     label,
                     anchor_id=anchor_id,
                     section_widget_id="#section_03_medical",
-                    id=f"subnav_{anchor_id}",
                 ))
         elif section_id == "04_pain_classification":
             for label, anchor_id in self.PAIN_CLASS_SUBS:
@@ -398,7 +391,6 @@ class SubsectionNavBar(Static):
                     label,
                     anchor_id=anchor_id,
                     section_widget_id="#section_04_pain_classification",
-                    id=f"subnav_{anchor_id}",
                 ))
         elif section_id == "05_outcome_measures":
             for label, anchor_id in self.OM_SUBS:
@@ -406,7 +398,6 @@ class SubsectionNavBar(Static):
                     label,
                     anchor_id=anchor_id,
                     section_widget_id="#section_05_outcome_measures",
-                    id=f"subnav_{anchor_id}",
                 ))
         elif section_id == "06_diagnosis":
             for label, anchor_id in self.DX_SUBS:
@@ -414,7 +405,6 @@ class SubsectionNavBar(Static):
                     label,
                     anchor_id=anchor_id,
                     section_widget_id="#section_06_diagnosis",
-                    id=f"subnav_{anchor_id}",
                 ))
         elif section_id == "07_barriers":
             for label, anchor_id in self.BR_SUBS:
@@ -422,7 +412,13 @@ class SubsectionNavBar(Static):
                     label,
                     anchor_id=anchor_id,
                     section_widget_id="#section_07_barriers",
-                    id=f"subnav_{anchor_id}",
+                ))
+        elif section_id == "08_rx_plan":
+            for label, anchor_id in self.RX_PLAN_SUBS:
+                self.mount(_NavChip(
+                    label,
+                    anchor_id=anchor_id,
+                    section_widget_id="#section_08_rx_plan",
                 ))
 
 
@@ -432,6 +428,7 @@ class PhysioAssessmentTUI(Container):
     BINDINGS = [
         Binding("ctrl+s", "save",          "Save",       show=True),
         Binding("ctrl+b", "open_bodychart","Body Chart", show=True),
+        Binding("ctrl+u", "reload_chart",  "Reload Chart", show=True),
         Binding("ctrl+e", "export",        "Export MD",  show=True),
         Binding("ctrl+r", "export_raw",    "Raw Report", show=True),
         Binding("ctrl+n", "scratchpad",    "Notes",      show=True),
@@ -548,17 +545,35 @@ class PhysioAssessmentTUI(Container):
         chart_panel.views_drawn        = body_chart.get("views_drawn", [])
 
         if self.current_session_file:
-            full_data = json.loads(Path(self.current_session_file).read_text())
+            try:
+                p = Path(self.current_session_file)
+                full_data = json.loads(p.read_text()) if p.exists() else {}
+            except Exception as e:
+                logger.error(f"on_session_switch: failed to read {self.current_session_file}: {e}")
+                full_data = {}
             assessment_view = self.query_one("#assessment_view", AssessmentView)
             assessment_view.load_session(self.current_session_file, full_data)
             from .storage import write_tui_pid
             write_tui_pid(os.getpid())
 
     async def on_chart_update(self, data: dict) -> None:
-        body_chart = data.get("body_chart", {})
+        # Derive chart panel indicators from raw session JSON strokes (type 5 = tick/clear)
+        strokes = data.get("subjective", {}).get("strokes", [])
+        seen_types = sorted({s["type"] for s in strokes if "type" in s and s["type"] != 5})
+
         chart_panel = self.query_one("#chart_panel", BodyChartPanel)
-        chart_panel.symptom_types_used = body_chart.get("symptom_types_used", [])
-        chart_panel.views_drawn        = body_chart.get("views_drawn", [])
+        chart_panel.symptom_types_used = seen_types
+        chart_panel.views_drawn        = sorted({s["view"] for s in strokes if "view" in s})
+        chart_panel.refresh()
+
+        # Refresh subjective note slots from updated body chart
+        try:
+            av = self.query_one("#assessment_view", AssessmentView)
+            subj = av.sections.get("02_subjective")
+            if subj is not None:
+                subj.refresh_from_chart(data)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Focus signal — GTK wrote .focus_tui, raise our kitty window
@@ -630,6 +645,25 @@ class PhysioAssessmentTUI(Container):
                 self._show_status(f"Launch failed: {e}")
                 logger.error(f"Failed to launch body chart: {e}")
 
+    def action_reload_chart(self) -> None:
+        """Ctrl+U — force-reload body chart data from _session.json and refresh note slots."""
+        if not self.current_session_file:
+            self._show_status("No session loaded")
+            return
+        try:
+            p = Path(self.current_session_file)
+            if not p.exists():
+                self._show_status("Session file not found")
+                return
+            data = json.loads(p.read_text())
+            av = self.query_one("#assessment_view", AssessmentView)
+            subj = av.sections.get("02_subjective")
+            if subj is not None:
+                subj.refresh_from_chart(data)
+            self._show_status("Body chart reloaded")
+        except Exception as e:
+            self._show_status(f"Reload failed: {e}")
+
     def action_export(self) -> None:
         """Ctrl+E — export session report to Markdown."""
         if not self.current_session_file:
@@ -666,6 +700,31 @@ class PhysioAssessmentTUI(Container):
             return
         assessment_view = self.query_one("#assessment_view", AssessmentView)
         assessment_view._show_section("scratchpad")
+
+    # ------------------------------------------------------------------
+    # Arrow-key scroll fallback — only when no widget is focused
+    # ------------------------------------------------------------------
+
+    def on_key(self, event) -> None:
+        """Scroll section_content with arrow keys when nothing is focused.
+
+        Field-to-field navigation is handled in BaseSection.on_key, which fires
+        earlier in the bubble chain (before ScrollableContainer).  This handler
+        only acts when app.focused is None so unfocused arrow presses still scroll.
+        """
+        if event.key not in ("up", "down"):
+            return
+        if self.app.focused is not None:
+            return
+        try:
+            sc = self.query_one("#section_content", ScrollableContainer)
+            if event.key == "up":
+                sc.scroll_up(animate=False)
+            else:
+                sc.scroll_down(animate=False)
+            event.stop()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Save state indicator

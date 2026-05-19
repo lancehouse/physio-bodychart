@@ -115,7 +115,7 @@ class MedicalSection(BaseSection):
     }
 
     .section_title    { text-style: bold; color: $text; margin-bottom: 0; }
-    .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
     .subgroup_header  { color: $text-muted; margin-top: 1; margin-bottom: 0; text-style: italic; }
 
     .btn_row  { height: auto; width: 100%; margin-bottom: 1; }
@@ -362,7 +362,7 @@ class MedicalSection(BaseSection):
         try:
             target = self.query_one(f"#{anchor_id}")
             self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(
-                target, top=True
+                target, top=True, animate=False
             )
         except Exception:
             pass

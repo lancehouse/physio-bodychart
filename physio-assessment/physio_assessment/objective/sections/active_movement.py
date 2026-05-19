@@ -6,6 +6,7 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Button, Input, Label, Static, TextArea
 
+from ...nav import escape_to_neighbor
 from ...sections.base import BaseSection
 from ...widgets import GridInput
 
@@ -156,7 +157,7 @@ class ActiveMovementSection(BaseSection):
         padding: 0 1 2 1;
     }
     ActiveMovementSection .section_title     { text-style: bold; margin-bottom: 0; }
-    ActiveMovementSection .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
 
     /* Two-line Ax/ReAx header — hdr_group uses 2fr to span two 1fr sub-columns */
     ActiveMovementSection .hdr_major  { layout: horizontal; height: 1; width: 100%; color: $text-muted; margin-bottom: 0; }
@@ -250,10 +251,10 @@ class ActiveMovementSection(BaseSection):
             c += step
         return None
 
-    def _focus_nearest(self, row: int, col: int) -> None:
-        """Focus the non-None cell in grid[row] nearest to col (try exact first, expand outward)."""
+    def _focus_nearest(self, row: int, col: int) -> bool:
+        """Focus the non-None cell in grid[row] nearest to col. Returns True if focused."""
         if row < 0 or row >= len(self._grid):
-            return
+            return False
         grid_row = self._grid[row]
         n = len(grid_row)
         col = max(0, min(col, n - 1))
@@ -262,43 +263,51 @@ class ActiveMovementSection(BaseSection):
                 if 0 <= c < n and grid_row[c] is not None:
                     try:
                         self.query_one(f"#{grid_row[c]}").focus()
-                        return
+                        return True
                     except Exception:
                         pass
+        return False
 
-    def _nav(self, direction: str, focused_id: str) -> None:
+    def _nav(self, direction: str, focused_id: str) -> bool:
+        """Navigate within the grid. Returns True if focus moved."""
         if focused_id not in self._grid_pos:
-            return
+            return False
         row, col = self._grid_pos[focused_id]
         if direction == "up":
-            self._focus_nearest(row - 1, col)
+            return self._focus_nearest(row - 1, col)
         elif direction == "down":
-            self._focus_nearest(row + 1, col)
+            return self._focus_nearest(row + 1, col)
         elif direction == "left":
             wid = self._walk(row, col - 1, -1)
             if wid:
                 self.query_one(f"#{wid}").focus()
+                return True
+            return False
         elif direction == "right":
             wid = self._walk(row, col + 1, +1)
             if wid:
                 self.query_one(f"#{wid}").focus()
+                return True
+            return False
+        return False
 
-    # GridInput posts Navigate when it hits a boundary
+    # GridInput posts Navigate when it hits a boundary; KEY event already stopped by GridInput
     @on(GridInput.Navigate)
     def _on_grid_input_navigate(self, event: GridInput.Navigate) -> None:
         focused = self.app.focused
         if focused is not None:
-            self._nav(event.direction, focused.id)
+            if not self._nav(event.direction, focused.id):
+                escape_to_neighbor(self, focused, event.direction)
         event.stop()
 
-    # Buttons don't consume arrow keys, so they bubble naturally
+    # Buttons bubble arrow keys — only stop if _nav moved focus (boundary → fall through to TUI)
     def on_key(self, event: events.Key) -> None:
         focused = self.app.focused
         if not isinstance(focused, Button) or focused.id not in self._grid_pos:
             return
         if event.key in ("up", "down", "left", "right"):
-            self._nav(event.key, focused.id)
-            event.stop()
+            if self._nav(event.key, focused.id):
+                event.stop()
 
     # ------------------------------------------------------------------
     # Field change → autosave

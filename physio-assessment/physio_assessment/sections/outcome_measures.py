@@ -220,10 +220,6 @@ class OutcomeMeasuresSection(BaseSection):
     }
 
     .section_title  { text-style: bold; margin-bottom: 0; }
-    .subsection_header {
-        text-style: bold; color: $primary;
-        padding-top: 1; margin-bottom: 0;
-    }
     .reference_note { color: $text-muted; margin-bottom: 0; }
 
     Label { margin-bottom: 0; }
@@ -427,7 +423,7 @@ class OutcomeMeasuresSection(BaseSection):
     def _jump_to(self, anchor_id: str) -> None:
         try:
             target = self.query_one(f"#{anchor_id}")
-            self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(target, top=True)
+            self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(target, top=True, animate=False)
         except Exception:
             pass
 

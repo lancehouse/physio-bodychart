@@ -1,14 +1,9 @@
 
 GTK:
-    remove 
     
 TUI:
-Behaviour tab: move up between history and flareups
-
-flip mood influences pain toggle to the other way green = no
 
 Classification Tab - many toggels need to be reversed.
-
 
 Barriers tab - toggels need to flip.
 
@@ -18,5 +13,7 @@ Not:
     Heading Label:
     |  Text Entry Field                                                                    |
     
-
-        
+03 meidcal 
+    all sections need a comments field to remove flag urgency.
+    
+Obj : BMI screen failure.

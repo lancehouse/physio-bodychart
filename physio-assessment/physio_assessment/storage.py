@@ -3044,7 +3044,7 @@ def create_new_session(patient_id: str, regions: list[str]) -> dict:
     iso_date = datetime.fromtimestamp(now).isoformat() + "Z"
 
     return {
-        "version": 2,
+        "version": 3,
         "patient_id": patient_id,
         "session_label": f"Assessment - {regions[0] if regions else 'General'}" if regions else "Assessment",
         "session_name": f"{patient_id}_{datetime.now().strftime('%d_%m_%Y_%H%M')}",
@@ -3061,6 +3061,8 @@ def create_new_session(patient_id: str, regions: list[str]) -> dict:
         },
         "subjective": {
             "strokes": [],
+            "stroke_clusters": [],
+            "misc_cluster_ids": [],
             "notes": [],
             "arrows": [],
             "link_matrix": [],

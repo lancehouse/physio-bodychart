@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import threading
 from pathlib import Path
 
 from textual.app import ComposeResult, on
@@ -17,7 +18,7 @@ from .sections.pain_classification import PainClassificationSection
 from .sections.outcome_measures import OutcomeMeasuresSection
 from .sections.diagnosis import DiagnosisSection
 from .sections.barriers import BarriersSection
-from .sections.placeholder import PlaceholderSection
+from .sections.rx_plan import RxPlanSection
 from .sections.scratchpad import ScratchpadSection
 from .objective.sections.general import GeneralSection
 from .objective.sections.active_movement import ActiveMovementSection
@@ -84,7 +85,8 @@ class SectionNav(Static):
         "05_outcome_measures": "06 Outcomes",
         "06_diagnosis": "07 Diagnosis",
         "07_barriers": "08 Barriers",
-        "scratchpad": "📝 Notes",
+        "08_rx_plan":  "09 Rx & Plan",
+        "scratchpad":  "📝 Notes",
     }
 
     def __init__(self, on_section_selected: callable, **kwargs):
@@ -104,6 +106,7 @@ class SectionNav(Static):
             "05_outcome_measures",
             "06_diagnosis",
             "07_barriers",
+            "08_rx_plan",
             "scratchpad",
         ]:
             label = self.SECTION_LABELS.get(section_id, section_id)
@@ -131,7 +134,7 @@ class SectionNav(Static):
             active_btn = self.query_one(f"#nav_{section_id}", Button)
             active_btn.add_class("active")
             self.active_section = section_id
-        except:
+        except Exception:
             pass
 
     def set_indicator(self, section_id: str, complete: bool) -> None:
@@ -215,6 +218,7 @@ class AssessmentView(Container):
             "05_outcome_measures":    OutcomeMeasuresSection(id="section_05_outcome_measures"),
             "06_diagnosis":           DiagnosisSection(id="section_06_diagnosis"),
             "07_barriers":            BarriersSection(id="section_07_barriers"),
+            "08_rx_plan":             RxPlanSection(id="section_08_rx_plan"),
             "scratchpad":             ScratchpadSection(id="section_scratchpad"),
             # Objective sections (hidden until objective mode is entered)
             "01_general":      GeneralSection(id="section_01_general"),
@@ -245,7 +249,9 @@ class AssessmentView(Container):
         if self._save_task and not self._save_task.done():
             self._save_task.cancel()
         if self.session_file:
-            save_docx_report(self.session_file)
+            threading.Thread(
+                target=save_docx_report, args=(self.session_file,), daemon=False
+            ).start()
 
     def load_session(self, session_file: str, data: dict) -> None:
         """Load session data into all sections."""
@@ -314,6 +320,14 @@ class AssessmentView(Container):
             br_section.session_file = session_file
             if isinstance(br_data, dict):
                 br_section.load(br_data)
+
+        # Load rx_plan section
+        rp_data = assessment.get("rx_plan", {})
+        if "08_rx_plan" in self.sections:
+            rp_section = self.sections["08_rx_plan"]
+            rp_section.session_file = session_file
+            if isinstance(rp_data, dict):
+                rp_section.load(rp_data)
 
         # Load diagnosis section
         dx_data = assessment.get("diagnosis", {})
@@ -423,7 +437,7 @@ class AssessmentView(Container):
         # Subsection nav bar: only for certain assessment sections
         has_subnav = (not self._in_objective_mode and section_id in (
             "02_subjective", "03_medical", "04_pain_classification",
-            "05_outcome_measures", "06_diagnosis", "07_barriers",
+            "05_outcome_measures", "06_diagnosis", "07_barriers", "08_rx_plan",
         ))
         try:
             nav_bar = self.app.query_one("#subsection_nav_bar")
@@ -517,6 +531,7 @@ class AssessmentView(Container):
             ("05_outcome_measures",  "outcome_measures"),
             ("06_diagnosis",         "diagnosis"),
             ("07_barriers",          "barriers"),
+            ("08_rx_plan",           "rx_plan"),
             ("scratchpad",           "scratchpad"),
         ]
 
@@ -553,16 +568,17 @@ class AssessmentView(Container):
             obj_sections_complete[section_id] = section.is_complete()
         save_objective(self.session_file, obj_assessment_data, obj_sections_complete)
 
-        # Update nav indicators from freshly written _assessment.json
-        assess_p = assessment_path(self.session_file)
-        nav_data = json.loads(assess_p.read_text()) if assess_p.exists() else {}
-        self._refresh_nav_indicators(nav_data)
+        # Update nav indicators directly from the in-memory dict — no round-trip read
+        self._refresh_nav_indicators({"sections_complete": sections_complete})
         self._update_medical_tab_color()
 
-        # Regenerate all reports on every save
-        save_raw_report(self.session_file)
-        export_session_report(self.session_file)
-        save_clean_reports(self.session_file)
+        # Regenerate all reports concurrently in threads so the event loop stays live
+        sf = self.session_file
+        await asyncio.gather(
+            asyncio.to_thread(save_raw_report, sf),
+            asyncio.to_thread(export_session_report, sf),
+            asyncio.to_thread(save_clean_reports, sf),
+        )
 
         self.post_message(self.SaveStateChanged("saved"))
 
@@ -592,6 +608,9 @@ class AssessmentView(Container):
         self._schedule_save()
 
     def on_barriers_section_field_changed(self) -> None:
+        self._schedule_save()
+
+    def on_rx_plan_section_field_changed(self) -> None:
         self._schedule_save()
 
     def on_scratchpad_section_field_changed(self) -> None:

@@ -45,6 +45,7 @@ class _RadioButton(Button):
 
     can_focus = False
 
+
     class Clicked(Message):
         def __init__(self, button: "Button") -> None:
             super().__init__()
@@ -73,8 +74,10 @@ class RadioGroup(Static):
         pass
 
     DEFAULT_CSS = """
-    RadioGroup        { height: 3; layout: horizontal; width: auto; }
-    RadioGroup Button { height: 3; width: 6; min-width: 6; max-width: 6; padding: 0; border: none; }
+    RadioGroup             { height: 3; layout: horizontal; width: auto; }
+    RadioGroup Button      { height: 3; width: 6; min-width: 6; max-width: 6; padding: 0; border: none; }
+    RadioGroup.-rg-focused { border: tall $accent; }
+    RadioGroup.-rg-focused Button { height: 1; min-height: 1; }
     """
 
     def __init__(self, options: list[tuple[str, str]], **kwargs) -> None:
@@ -128,12 +131,16 @@ class RadioGroup(Static):
         self.post_message(self.Changed())
 
     def key_left(self) -> None:
-        n = max(0, (self._selected or 0) - 1)
-        self._select(n)
+        if self._selected is None:
+            self._select(len(self._options) - 1)
+        else:
+            self._select(max(0, self._selected - 1))
 
     def key_right(self) -> None:
-        n = min(len(self._options) - 1, (self._selected or 0) + 1)
-        self._select(n)
+        if self._selected is None:
+            self._select(0)
+        else:
+            self._select(min(len(self._options) - 1, self._selected + 1))
 
     def key_enter(self) -> None:
         self.screen.focus_next()
@@ -143,6 +150,12 @@ class RadioGroup(Static):
 
     async def key_y(self) -> None:
         self.screen.focus_next()
+
+    def on_focus(self) -> None:
+        self.add_class("-rg-focused")
+
+    def on_blur(self) -> None:
+        self.remove_class("-rg-focused")
 
     def set_value(self, value: str | None) -> None:
         if value is None:
@@ -232,7 +245,7 @@ class CheckButton(Button):
     """
 
     STATES = [
-        ("", "orange"),      # unanswered
+        ("", "#FFBF00"),      # unanswered
         ("Yes", "green"),    # confirmed yes
         ("No", "red"),       # confirmed no
     ]
@@ -307,7 +320,7 @@ class FlagButton(CheckButton):
     """
 
     STATES = [
-        ("", "orange"),     # unanswered
+        ("", "#FFBF00"),     # unanswered
         ("Yes", "red"),     # flag present — danger
         ("No", "green"),    # flag absent — safe
     ]

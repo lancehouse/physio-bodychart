@@ -1,8 +1,6 @@
-"""Barriers to Recovery & Treatment Plan section (core/07).
+"""Barriers to Recovery — F8.
 
-Note: the spec calls for tick-driven auto-population of the treatment plan and
-output table (ui-hint: auto-generated). That is deferred to a future phase;
-all treatment plan fields are free-text editable for now.
+Treatment Plan, Session 1, Day 1 checklist, and Follow-Up are in RxPlanSection (F9).
 """
 
 import json
@@ -29,21 +27,10 @@ _DASS_SEVERITY_OPTIONS = [
     ("Extremely severe", "error"),
 ]
 
-_PAIN_TYPE_OPTIONS = [
-    ("1 — Nociceptive / Neuropathic", "primary"),
-    ("2 — Nociplastic",               "warning"),
-]
-
 _PTSD_MECHANISM_OPTIONS = [
     ("Motor vehicle accident",  "default"),
     ("Traumatic work accident", "default"),
     ("Other",                   "default"),
-]
-
-_DEBUNK_OPTIONS = [
-    ("Yes", "success"),
-    ("No",  "error"),
-    ("N/A", "default"),
 ]
 
 
@@ -85,21 +72,10 @@ _TOGGLE_FIELDS = [
     # Medical barriers
     "b_med_red_flag", "b_med_substance", "b_med_as", "b_med_aaa",
     "b_med_vascular", "b_med_cervical_ha", "b_med_medico_legal",
-    # Treatment Plan
-    "tx_consent_explanation", "s1_consent_content", "tx_email_obtained", "tx_display_book",
-    # Homework
-    "hw_online_module", "hw_mindfulness", "hw_goal_sheet", "hw_activity_diary", "hw_sleep_diary",
-    # Day 1 checklist
-    "d1_explanation", "d1_session2", "d1_hypothesis", "d1_diagnosis", "d1_values",
-    "d1_evidence", "d1_plan", "d1_prognosis", "d1_stakeholders", "d1_confidence_tested",
-    "d1_questionnaires",
-    # Post-session admin
-    "ps_questionnaires", "ps_eppoc", "ps_ptsd_scored", "ps_isi_pbas", "ps_csi", "ps_audit_dudit",
 ]
 
 _CYCLE_FIELDS = [
-    "bx_dep_severity", "bx_anx_severity", "bx_stress_severity",
-    "bx_ptsd_mechanism", "tx_pain_type", "tx_debunk_radiology",
+    "bx_dep_severity", "bx_anx_severity", "bx_stress_severity", "bx_ptsd_mechanism",
 ]
 
 _INPUT_FIELDS = [
@@ -107,16 +83,9 @@ _INPUT_FIELDS = [
     "bi_nerve_region", "bi_red_flag_detail", "bi_substance_detail",
     "custom_1_barrier", "custom_1_strategy",
     "custom_2_barrier", "custom_2_strategy",
-    "s1_confidence_nrs", "fu_om_schedule",
 ]
 
-_TEXT_FIELDS = [
-    "tx_goal_orientation", "tx_formulation",
-    "tx_program", "tx_home_program",
-    "tx_psychosocial", "tx_medical", "tx_rtw",
-    "s1_education", "s1_experiential", "s1_hw_other",
-    "fu_next_focus", "fu_monitoring",
-]
+_TEXT_FIELDS: list[str] = []  # all treatment plan fields moved to RxPlanSection
 
 # Barriers used for is_complete (any reviewed = section is started)
 _MAIN_BARRIERS = [
@@ -150,10 +119,6 @@ class BarriersSection(BaseSection):
     }
 
     .section_title     { text-style: bold; margin-bottom: 0; }
-    .subsection_header {
-        text-style: bold; color: $primary;
-        padding-top: 1; margin-bottom: 0;
-    }
     .group_header {
         color: $text-muted; padding-top: 0; margin-bottom: 0;
     }
@@ -182,7 +147,7 @@ class BarriersSection(BaseSection):
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:  # noqa: C901
-        yield Label("Barriers to Recovery & Treatment Plan", classes="section_title")
+        yield Label("08 Barriers to Recovery", classes="section_title")
 
         # ── Physical / Nociceptive ─────────────────────────────
         yield Label("— Physical / Nociceptive Barriers —", classes="subsection_header", id="br_physical")
@@ -340,89 +305,6 @@ class BarriersSection(BaseSection):
         yield Label("   Strategy:")
         yield Input(id="custom_2_strategy", placeholder="treatment strategy")
 
-        # ── Treatment Plan Summary ─────────────────────────────
-        yield Label("— Treatment Plan Summary —", classes="subsection_header", id="br_treatment")
-
-        yield Label("Education — pain type explanation:")
-        yield CycleField("tx_pain_type", _PAIN_TYPE_OPTIONS)
-        yield CheckButton("Consent to discuss explanation", id="tx_consent_explanation")
-        yield Label("Debunk radiology (if nociplastic):")
-        yield CycleField("tx_debunk_radiology", _DEBUNK_OPTIONS)
-        yield Label("Goal orientation:")
-        yield TextArea(id="tx_goal_orientation", language="plain")
-        yield Label("Formulation (why treatment will be effective):")
-        yield TextArea(id="tx_formulation", language="plain")
-
-        yield Label("Exercise / Rehabilitation — program:")
-        yield TextArea(id="tx_program", language="plain")
-        yield Label("Home program:")
-        yield TextArea(id="tx_home_program", language="plain")
-
-        yield Label("Psychosocial strategies:")
-        yield TextArea(id="tx_psychosocial", language="plain")
-        yield Label("Medical / Referral:")
-        yield TextArea(id="tx_medical", language="plain")
-        yield Label("RTW plan:")
-        yield TextArea(id="tx_rtw", language="plain")
-
-        # ── Session 1 Treatment ────────────────────────────────
-        yield Label("— Session 1 Treatment —", classes="subsection_header", id="br_session1")
-        yield Label("(Consider: (1) Specialist treatment; (2) Monitor treatment by others; (3) Referral)", classes="reference_note")
-
-        yield Label("Education provided:")
-        yield TextArea(id="s1_education", language="plain")
-        yield Label("Experiential treatment (motor control / box breathing / other):")
-        yield TextArea(id="s1_experiential", language="plain")
-        yield CheckButton("Consent to discuss content", id="s1_consent_content")
-
-        yield Label("Confidence / understanding NRS (0–10):")
-        yield Input(id="s1_confidence_nrs", placeholder="0–10")
-
-        yield Label("Homework set:")
-        yield CheckButton("Online module — questions / reflections for next session", id="hw_online_module")
-        yield CheckButton("Mindfulness / experiential practice", id="hw_mindfulness")
-        yield CheckButton("Goal sheet", id="hw_goal_sheet")
-        yield CheckButton("Activity diary", id="hw_activity_diary")
-        yield CheckButton("Sleep diary", id="hw_sleep_diary")
-        yield Label("Other homework:")
-        yield TextArea(id="s1_hw_other", language="plain")
-
-        yield CheckButton("Email obtained for resources", id="tx_email_obtained")
-        yield CheckButton("Patient display book provided", id="tx_display_book")
-
-        # ── Day 1 Checklist ────────────────────────────────────
-        yield Label("— Day 1 Checklist —", classes="subsection_header", id="br_day1")
-
-        yield CheckButton("Clear and simple explanation delivered", id="d1_explanation")
-        yield CheckButton("Importance of Session 2 communicated", id="d1_session2")
-        yield CheckButton("Complexity and hypothesis testing articulated", id="d1_hypothesis")
-        yield CheckButton("Diagnosis and formulation provided (implies pain type)", id="d1_diagnosis")
-        yield CheckButton("Patient values / preferences / goals articulated", id="d1_values")
-        yield CheckButton("Evidence discussed (ePPOC and RCTs referenced)", id="d1_evidence")
-        yield CheckButton("Short and long term plan provided", id="d1_plan")
-        yield CheckButton("Prognosis and prevention discussed", id="d1_prognosis")
-        yield CheckButton("Other stakeholders identified (work, family, health practitioners)", id="d1_stakeholders")
-        yield CheckButton("Confidence / understanding tested", id="d1_confidence_tested")
-        yield CheckButton("Questionnaires administered (individualised set)", id="d1_questionnaires")
-
-        # ── Follow-Up Plan ─────────────────────────────────────
-        yield Label("— Follow-Up Plan —", classes="subsection_header", id="br_followup")
-
-        yield Label("Next session focus:")
-        yield TextArea(id="fu_next_focus", language="plain")
-        yield Label("Monitoring:")
-        yield TextArea(id="fu_monitoring", language="plain")
-        yield Label("Outcome measure re-testing schedule:")
-        yield Input(id="fu_om_schedule", placeholder="schedule")
-
-        yield Label("Post-Session Admin:")
-        yield CheckButton("Questionnaires scored", id="ps_questionnaires")
-        yield CheckButton("ePPOC components completed", id="ps_eppoc")
-        yield CheckButton("PTSD screen scored (if administered)", id="ps_ptsd_scored")
-        yield CheckButton("ISI and PBAS scored (if sleep is primary problem)", id="ps_isi_pbas")
-        yield CheckButton("CSI scored", id="ps_csi")
-        yield CheckButton("AUDIT / DUDIT scored (if administered)", id="ps_audit_dudit")
-
     # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
@@ -430,7 +312,7 @@ class BarriersSection(BaseSection):
     def _jump_to(self, anchor_id: str) -> None:
         try:
             target = self.query_one(f"#{anchor_id}")
-            self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(target, top=True)
+            self.app.query_one("#section_content", ScrollableContainer).scroll_to_widget(target, top=True, animate=False)
         except Exception:
             pass
 

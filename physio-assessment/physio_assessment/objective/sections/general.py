@@ -31,6 +31,8 @@ _STS4  = [("Norm",  "success"), ("Hand",   "warning"), ("Reduc",  "warning"), ("
 class GeneralSection(BaseSection):
     """01 General Observation — physical stats, posture, functional movement."""
 
+    _nav_include_inputs = True  # include Input (stats) in arrow-key nav candidates
+
     class FieldChanged(Message):
         pass
 
@@ -62,7 +64,7 @@ class GeneralSection(BaseSection):
         padding: 0 1 2 1;
     }
     GeneralSection .section_title     { text-style: bold; margin-bottom: 0; }
-    GeneralSection .subsection_header { text-style: bold; color: $primary; margin-top: 1; margin-bottom: 0; }
+
 
     /* Physical stats row */
     GeneralSection .stats_row   { layout: horizontal; height: 3; width: 100%; margin-bottom: 0; }
