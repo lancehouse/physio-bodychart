@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from pathlib import Path
+from typing import Callable
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
@@ -9,6 +10,11 @@ from textual.widgets import Label, Input, TextArea
 
 from .form_schema import SubsectionDef, FieldDef, load_subsection_yaml
 from .widgets import RadioGroup
+from .logic import calc_sleep_efficiency
+
+_FORMULA_REGISTRY: dict[str, Callable] = {
+    "calc_sleep_efficiency": calc_sleep_efficiency,
+}
 
 
 class YamlSubsection(Container):
@@ -84,18 +90,57 @@ class YamlSubsection(Container):
                     yield Input(id=f.id, placeholder=ph, disabled=True)
 
     # ------------------------------------------------------------------
+    # Calculated fields
+    # ------------------------------------------------------------------
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if self._loading:
+            return
+        # Ignore programmatic updates to calculated-field widgets
+        fid = event.input.id
+        if any(f.id == fid and f.type == "calculated" for f in self._def.fields):
+            return
+        self._recompute_calculated()
+
+    def _recompute_calculated(self) -> None:
+        for f in self._def.fields:
+            if f.type != "calculated" or not f.formula_fn:
+                continue
+            fn = _FORMULA_REGISTRY.get(f.formula_fn)
+            if fn is None:
+                continue
+            kwargs: dict[str, str] = {}
+            for inp_id in f.inputs:
+                inp_f = next((x for x in self._def.fields if x.id == inp_id), None)
+                if inp_f is None:
+                    continue
+                try:
+                    if inp_f.type == "input":
+                        kwargs[inp_id] = self.query_one(f"#{inp_id}", Input).value
+                    elif inp_f.type == "text_area":
+                        kwargs[inp_id] = self.query_one(f"#{inp_id}", TextArea).text
+                    elif inp_f.type == "radio":
+                        lbl = self.query_one(f"#{inp_id}", RadioGroup).value
+                        kwargs[inp_id] = self._l2v[inp_id].get(lbl, "") if lbl else ""
+                except Exception:
+                    kwargs[inp_id] = ""
+            try:
+                result = fn(**kwargs)
+                self.query_one(f"#{f.id}", Input).value = result
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
     # Data
     # ------------------------------------------------------------------
 
     def collect(self) -> dict:
         data: dict = {}
         for f in self._def.fields:
-            if f.type == "calculated":
-                continue  # derived — never persisted
             try:
                 if f.type == "text_area":
                     data[f.id] = self.query_one(f"#{f.id}", TextArea).text
-                elif f.type == "input":
+                elif f.type in ("input", "calculated"):
                     data[f.id] = self.query_one(f"#{f.id}", Input).value
                 elif f.type == "radio":
                     lbl = self.query_one(f"#{f.id}", RadioGroup).value
@@ -109,7 +154,7 @@ class YamlSubsection(Container):
         try:
             for f in self._def.fields:
                 if f.type == "calculated":
-                    continue
+                    continue  # recomputed live; don't load stale value
                 val = data.get(f.id)
                 try:
                     if f.type == "text_area":
@@ -123,3 +168,4 @@ class YamlSubsection(Container):
                     pass
         finally:
             self._loading = False
+            self._recompute_calculated()

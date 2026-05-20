@@ -1,8 +1,116 @@
 """Clinical logic layer - pure functions, no UI imports, no persistence."""
 
+import re
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 from .models import Session, OutcomeMeasureResult
+
+
+# ---------------------------------------------------------------------------
+# Sleep efficiency helpers
+# ---------------------------------------------------------------------------
+
+def _extract_time_token(s: str) -> str:
+    """Pull the first numeric time token out of a free-text string.
+
+    Handles entries like '645 most days', '22:00 approx', '930'.
+    """
+    m = re.search(r'\d{1,4}(?::\d{0,2})?', s.strip())
+    return m.group() if m else ""
+
+
+def _parse_clock(s: str) -> int | None:
+    """Parse a clock-time string to minutes since midnight, or None.
+
+    Accepts: '22:30', '2230', '645', '6:45', '0645'.
+    Rules (no colon): ≤2 digits → hours; 3 digits → h+mm; 4 digits → hhmm.
+    Returns None if out of range or unparseable.
+    """
+    if not s:
+        return None
+    token = _extract_time_token(s)
+    if not token:
+        return None
+    if ':' in token:
+        parts = token.split(':', 1)
+        h = int(parts[0]) if parts[0] else 0
+        mn = int(parts[1]) if parts[1] else 0
+    else:
+        d = token
+        if len(d) <= 2:
+            h, mn = int(d), 0
+        elif len(d) == 3:
+            h, mn = int(d[0]), int(d[1:])
+        else:
+            h, mn = int(d[:2]), int(d[2:])
+    if h > 23 or mn > 59:
+        return None
+    return h * 60 + mn
+
+
+def _parse_duration(s: str) -> int | None:
+    """Parse a duration string to total minutes, or None.
+
+    With colon: h:mm → total minutes.
+    Without colon: digits treated as total minutes (so '60' → 60 min).
+    """
+    if not s:
+        return None
+    token = _extract_time_token(s)
+    if not token:
+        return None
+    if ':' in token:
+        parts = token.split(':', 1)
+        h = int(parts[0]) if parts[0] else 0
+        mn = int(parts[1]) if parts[1] else 0
+        return h * 60 + mn
+    return int(token)
+
+
+def calc_sleep_efficiency(
+    sleep_onset_time: str,
+    sleep_waso_duration: str,
+    sleep_final_wakeup: str,
+    sleep_time_to_bed: str,
+    sleep_awake_out_bed: str,
+    sleep_time_out_of_bed: str,
+) -> str:
+    """Return sleep efficiency as 'NN%', or '' if any required input is missing.
+
+    Formula:
+        TST = (FWT - SOL) - WASO_dur
+        TIB = (TOB - TIB_start) - WOOB
+        SE  = TST / TIB * 100
+
+    Midnight crossing: clock times that fall before TIB_start are assumed to
+    be post-midnight; add 1440 min so all arithmetic stays monotonic.
+    """
+    tib_start = _parse_clock(sleep_time_to_bed)
+    sol       = _parse_clock(sleep_onset_time)
+    fwt       = _parse_clock(sleep_final_wakeup)
+    tob       = _parse_clock(sleep_time_out_of_bed)
+    waso_dur  = _parse_duration(sleep_waso_duration)
+    woob      = _parse_duration(sleep_awake_out_bed)
+
+    if any(v is None for v in (tib_start, sol, fwt, tob, waso_dur, woob)):
+        return ""
+
+    # Midnight crossing for clock times
+    if sol < tib_start:
+        sol += 1440
+    if fwt < tib_start:
+        fwt += 1440
+    if tob < tib_start:
+        tob += 1440
+
+    tst = (fwt - sol) - waso_dur
+    tib = (tob - tib_start) - woob
+
+    if tib <= 0 or tst < 0:
+        return ""
+
+    se = max(0, min(100, round(tst / tib * 100)))
+    return f"{se}%"
 
 
 def get_bodychart_command(session_path: Path) -> list:
