@@ -25,6 +25,8 @@ from textual.widgets import Header, Footer, Static, Label, Input, TextArea, Butt
 from textual.binding import Binding
 
 from .watcher import BodyChartWatcher
+from .search import build_index
+from .search_widget import SearchModal
 from .storage import (
     load_assessment, save_assessment, list_sessions, create_new_session,
     read_gtk_pid, read_tui_socket, write_focus_signal, export_session_report,
@@ -217,6 +219,17 @@ class SessionHeader(Static):
 
 
 class BodyChartPanel(Static):
+
+    DEFAULT_CSS = """
+    BodyChartPanel {
+        width: auto;
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    BodyChartPanel:hover { color: $text; }
+    """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.symptom_types_used = []
@@ -224,13 +237,19 @@ class BodyChartPanel(Static):
 
     def render(self) -> str:
         if not self.symptom_types_used:
-            return "No body chart data"
+            return "⌕ search"
         lines = ["Body Chart:"]
         if self.views_drawn:
             lines.append(f"Views: {', '.join(str(v) for v in self.views_drawn)}")
         if self.symptom_types_used:
             lines.append(f"Symptoms: {', '.join(str(s) for s in self.symptom_types_used)}")
         return "  ".join(lines)
+
+    def on_click(self) -> None:
+        try:
+            self.app.query_one("PhysioAssessmentTUI").action_search()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -432,10 +451,13 @@ class PhysioAssessmentTUI(Container):
         Binding("ctrl+e", "export",        "Export MD",  show=True),
         Binding("ctrl+r", "export_raw",    "Raw Report", show=True),
         Binding("ctrl+n", "scratchpad",    "Notes",      show=True),
+        Binding("ctrl+f",      "search",   "Search",     show=True,  priority=True),
     ]
 
     DEFAULT_CSS = """
-    PhysioAssessmentTUI { height: 100%; width: 100%; layout: vertical; }
+    PhysioAssessmentTUI {
+        height: 100%; width: 100%; layout: vertical;
+    }
 
     #top_bar {
         height: 1;
@@ -448,11 +470,6 @@ class PhysioAssessmentTUI(Container):
         height: 1;
         color: $text;
         padding: 0 1 0 0;
-    }
-    #chart_panel {
-        width: auto;
-        height: 1;
-        color: $text-muted;
     }
     #subsection_nav_bar {
         display: none;
@@ -605,6 +622,50 @@ class PhysioAssessmentTUI(Container):
     # Actions
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Search (ctrl+f)
+    # ------------------------------------------------------------------
+
+    def action_search(self) -> None:
+        """Open the jump-search modal."""
+        index = build_index(self.app)
+
+        def _callback(result) -> None:
+            if result is not None:
+                self._execute_jump(result)
+
+        self.app.push_screen(SearchModal(index), _callback)
+
+    def _execute_jump(self, entry) -> None:
+        from .assessment_view import AssessmentView
+        from textual.containers import ScrollableContainer
+        try:
+            av = self.query_one("#assessment_view", AssessmentView)
+            av._show_section(entry.section_id)
+            section = av.sections.get(entry.section_id)
+            if section is None:
+                return
+            if entry.widget_id:
+                # Jump directly to the specific widget; anchor only used as fallback
+                try:
+                    w = section.query_one(f"#{entry.widget_id}")
+                    w.focus()
+                    sc = self.app.query_one("#section_content", ScrollableContainer)
+                    sc.scroll_to_widget(w, animate=False)
+                except Exception:
+                    if entry.anchor_id:
+                        if hasattr(section, "_jump_to"):
+                            section._jump_to(entry.anchor_id)
+                        section._focus_first_after(entry.anchor_id)
+            elif entry.anchor_id:
+                if hasattr(section, "_jump_to"):
+                    section._jump_to(entry.anchor_id)
+                section._focus_first_after(entry.anchor_id)
+            else:
+                section.focus_first_field()
+        except Exception as e:
+            logger.error(f"Search jump failed: {e}")
+
     async def save_if_pending(self) -> None:
         """Flush pending debounced save before navigating away. Only saves if a save is queued."""
         assessment_view = self.query_one("#assessment_view", AssessmentView)
@@ -694,24 +755,22 @@ class PhysioAssessmentTUI(Container):
         asyncio.create_task(_save_then_notify())
 
     def action_scratchpad(self) -> None:
-        """Ctrl+N — jump to the scratchpad section."""
+        """Ctrl+N — jump to the scratchpad section and place cursor at end."""
         if not self.current_session_file:
             self._show_status("No session loaded")
             return
         assessment_view = self.query_one("#assessment_view", AssessmentView)
         assessment_view._show_section("scratchpad")
+        sp = assessment_view.sections.get("scratchpad")
+        if sp:
+            sp.focus_end()
 
     # ------------------------------------------------------------------
     # Arrow-key scroll fallback — only when no widget is focused
     # ------------------------------------------------------------------
 
     def on_key(self, event) -> None:
-        """Scroll section_content with arrow keys when nothing is focused.
-
-        Field-to-field navigation is handled in BaseSection.on_key, which fires
-        earlier in the bubble chain (before ScrollableContainer).  This handler
-        only acts when app.focused is None so unfocused arrow presses still scroll.
-        """
+        """Arrow keys scroll the section when no widget is focused."""
         if event.key not in ("up", "down"):
             return
         if self.app.focused is not None:

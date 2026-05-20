@@ -92,7 +92,7 @@ class SensorySection(BaseSection):
         yield Label("05 Sensory", classes="section_title")
 
         # ── Reduced Sensory Acuity ────────────────────────────────────────────
-        yield Label("Reduced Sensory Acuity (hyposensitivity)", classes="subsection_header")
+        yield Label("Reduced Sensory Acuity (hyposensitivity)", classes="subsection_header", id="sn_hyposensitivity")
         for label, sid, has_detail in _HYPO_ITEMS:
             with Horizontal(classes="sn_row"):
                 yield CheckButton(label, id=sid)
@@ -102,7 +102,7 @@ class SensorySection(BaseSection):
 
         # ── Heightened Sensitivity ────────────────────────────────────────────
         yield Label("Heightened Sensitivity / Central Sensitisation",
-                    classes="subsection_header")
+                    classes="subsection_header", id="sn_hypersensitivity")
 
         # PPT — first entry; will link to body-chart findings in future phase
         with Horizontal(classes="ppt_row"):

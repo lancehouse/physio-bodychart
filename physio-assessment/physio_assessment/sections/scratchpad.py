@@ -93,6 +93,16 @@ class ScratchpadSection(BaseSection):
         except Exception:
             return {"notes": self._pending_notes or ""}
 
+    def focus_end(self) -> None:
+        """Focus the text area and place the cursor at the end of existing text."""
+        try:
+            ta = self.query_one("#scratchpad_text", TextArea)
+            ta.focus()
+            lines = ta.text.split("\n")
+            ta.cursor_location = (len(lines) - 1, len(lines[-1]))
+        except Exception:
+            pass
+
     def is_complete(self) -> bool:
         return False  # never contributes to completion counter
 

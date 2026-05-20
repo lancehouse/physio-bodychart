@@ -194,14 +194,14 @@ class ActiveMovementSection(BaseSection):
     def compose(self) -> ComposeResult:
         yield Label("02 Active Movement", classes="section_title")
 
-        yield Label("Lumbar ROM", classes="subsection_header")
+        yield Label("Lumbar ROM", classes="subsection_header", id="am_lumbar")
         yield from self._rom_headers()
         for label, prefix, bilateral in self._LX_ROWS:
             yield ROMRow(label, prefix, bilateral, id=f"row_{prefix}")
         yield Label("Comment:")
         yield TextArea(id="am_lx_notes", language="plain")
 
-        yield Label("Thoracic ROM", classes="subsection_header")
+        yield Label("Thoracic ROM", classes="subsection_header", id="am_thoracic")
         yield from self._rom_headers()
         for label, prefix, bilateral in self._TX_ROWS:
             yield ROMRow(label, prefix, bilateral, id=f"row_{prefix}")

@@ -139,7 +139,7 @@ class NeurologicalSection(BaseSection):
         yield Label("04 Neurological", classes="section_title")
 
         # ── Reflexes ──────────────────────────────────────────────────────────
-        yield Label("Reflexes", classes="subsection_header")
+        yield Label("Reflexes", classes="subsection_header", id="nr_reflexes")
         with Horizontal(classes="rm_hdr"):
             yield Static("",      classes="rm_hdr_lbl")
             yield Static("Left",  classes="rm_hdr_col")
@@ -153,7 +153,7 @@ class NeurologicalSection(BaseSection):
                 yield RadioGroup(states, id=f"{prefix}_r")
 
         # ── Myotomes ──────────────────────────────────────────────────────────
-        yield Label("Myotomes", classes="subsection_header")
+        yield Label("Myotomes", classes="subsection_header", id="nr_myotomes")
         with Horizontal(classes="rm_hdr"):
             yield Static("",      classes="rm_hdr_lbl")
             yield Static("Left",  classes="rm_hdr_col")
@@ -167,7 +167,7 @@ class NeurologicalSection(BaseSection):
                 yield RadioGroup(states, id=f"{prefix}_r")
 
         # ── Dermatomes ────────────────────────────────────────────────────────
-        yield Label("Dermatomes", classes="subsection_header")
+        yield Label("Dermatomes", classes="subsection_header", id="nr_dermatomes")
         with Horizontal(classes="rm_hdr"):
             yield Static("",      classes="rm_hdr_lbl")
             yield Static("Left",  classes="rm_hdr_col")
@@ -181,7 +181,7 @@ class NeurologicalSection(BaseSection):
                 yield RadioGroup(_DERM, id=f"{prefix}_r")
 
         # ── Neurodynamics ─────────────────────────────────────────────────────
-        yield Label("Neurodynamics", classes="subsection_header")
+        yield Label("Neurodynamics", classes="subsection_header", id="nr_neurodynamics")
         with Horizontal(classes="nd_hdr"):
             yield Static("",      classes="nd_hdr_lbl")
             yield Static("Left",  classes="nd_hdr_grp")
@@ -208,7 +208,7 @@ class NeurologicalSection(BaseSection):
                 yield RadioGroup(_ND_RESP,   id=f"{prefix}_r_resp")
 
         # ── UMN Signs ─────────────────────────────────────────────────────────
-        yield Label("UMN Signs", classes="subsection_header")
+        yield Label("UMN Signs", classes="subsection_header", id="nr_umn")
         with Horizontal(classes="umn_row"):
             for label, uid in _UMN_ITEMS:
                 yield CheckButton(label, id=uid)

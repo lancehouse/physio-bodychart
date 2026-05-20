@@ -462,10 +462,18 @@ class SubjectiveSection(BaseSection):
             agg  = saved.get("agg",  "")
             ease = saved.get("ease", "")
 
-            self.query_one(f"#note_{i}_loc", TextArea).text = loc
-            self.query_one(f"#note_{i}_nat", TextArea).text = nat
-            self.query_one(f"#note_{i}_agg", TextArea).text = agg
-            self.query_one(f"#note_{i}_ease", TextArea).text = ease
+            ta = self.query_one(f"#note_{i}_loc", TextArea)
+            if ta.text != loc:
+                ta.text = loc
+            ta = self.query_one(f"#note_{i}_nat", TextArea)
+            if ta.text != nat:
+                ta.text = nat
+            ta = self.query_one(f"#note_{i}_agg", TextArea)
+            if ta.text != agg:
+                ta.text = agg
+            ta = self.query_one(f"#note_{i}_ease", TextArea)
+            if ta.text != ease:
+                ta.text = ease
 
         # Misc slot
         misc      = prefill.get("misc", {})
@@ -474,8 +482,12 @@ class SubjectiveSection(BaseSection):
 
         if misc_loc or misc_nat:
             self.query_one("#misc_slot").display = True
-            self.query_one("#misc_loc", TextArea).text = misc_loc
-            self.query_one("#misc_nat", TextArea).text = misc_nat
+            ta = self.query_one("#misc_loc", TextArea)
+            if ta.text != misc_loc:
+                ta.text = misc_loc
+            ta = self.query_one("#misc_nat", TextArea)
+            if ta.text != misc_nat:
+                ta.text = misc_nat
 
         has_content = bool(notes) or bool(misc_loc or misc_nat)
         self.query_one("#no_notes_msg").display = not has_content

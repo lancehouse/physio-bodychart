@@ -99,11 +99,38 @@ class BaseSection(Container):
                 pass
             event.stop()
 
+    def on_mount(self) -> None:
+        for inp in self.query(Input):
+            inp.select_on_focus = False
+
+    def on_show(self) -> None:
+        for ta in self.query(TextArea):
+            if ta.text and ta.cursor_location == (0, 0):
+                lines = ta.text.split("\n")
+                ta.cursor_location = (len(lines) - 1, len(lines[-1]))
+
     def focus_first_field(self) -> None:
         """Focus the first interactive widget in this section."""
         try:
             self.query("Input, TextArea, CheckButton, Button").first().focus()
         except NoMatches:
+            pass
+
+    def _focus_first_after(self, anchor_id: str) -> None:
+        """Focus and scroll to the first can_focus widget after anchor_id in DOM order."""
+        try:
+            anchor = self.query_one(f"#{anchor_id}")
+            nodes = list(self.query("*"))
+            for widget in nodes[nodes.index(anchor) + 1:]:
+                if widget.can_focus:
+                    widget.focus()
+                    try:
+                        sc = self.app.query_one("#section_content", ScrollableContainer)
+                        sc.scroll_to_widget(widget, animate=False)
+                    except Exception:
+                        pass
+                    return
+        except Exception:
             pass
 
     def load(self, data: dict) -> None:

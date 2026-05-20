@@ -130,7 +130,7 @@ class MuscleSection(BaseSection):
         yield Label("06 Muscle Testing", classes="section_title")
 
         # ── Muscle Length ─────────────────────────────────────────────────────
-        yield Label("Muscle Length", classes="subsection_header")
+        yield Label("Muscle Length", classes="subsection_header", id="ml_length")
         with Horizontal(classes="rm_hdr"):
             yield Static("",      classes="rm_hdr_lbl")
             yield Static("Left",  classes="rm_hdr_col")
@@ -144,14 +144,14 @@ class MuscleSection(BaseSection):
                 yield RadioGroup(_ML4, id=f"{prefix}_r")
 
         # ── Muscle Activation ─────────────────────────────────────────────────
-        yield Label("Muscle Activation", classes="subsection_header")
+        yield Label("Muscle Activation", classes="subsection_header", id="ml_activation")
         for label, mid in _MA_ROWS:
             with Horizontal(classes="rm_row"):
                 yield Static(label,         classes="rm_lbl")
                 yield RadioGroup(_MA4, id=mid)
 
         # ── Strength — Trunk ──────────────────────────────────────────────────
-        yield Label("Strength — Trunk", classes="subsection_header")
+        yield Label("Strength — Trunk", classes="subsection_header", id="ml_strength_trunk")
         with Horizontal(classes="trunk_row"):
             yield Static("Flexion (crook)",   classes="trunk_lbl")
             yield GridInput(placeholder="reps / min",   id="st_flex", classes="trunk_inp")
@@ -160,7 +160,7 @@ class MuscleSection(BaseSection):
             yield GridInput(placeholder="raises / min", id="st_ext",  classes="trunk_inp")
 
         # ── Strength — Hip (Wagner FPX kg) ────────────────────────────────────
-        yield Label("Strength — Hip  (Wagner FPX kg)", classes="subsection_header")
+        yield Label("Strength — Hip  (Wagner FPX kg)", classes="subsection_header", id="ml_strength_hip")
         with Horizontal(classes="hip_hdr"):
             yield Static("",      classes="hip_hdr_lbl")
             yield Static("Left",  classes="hip_hdr_col")
@@ -172,7 +172,7 @@ class MuscleSection(BaseSection):
                 yield GridInput(placeholder="kg", id=f"{prefix}_r", classes="hip_inp")
 
         # ── SIJ Provocation ───────────────────────────────────────────────────
-        yield Label("SIJ Provocation Signs", classes="subsection_header")
+        yield Label("SIJ Provocation Signs", classes="subsection_header", id="ml_sij")
         with Horizontal(classes="sij_row"):
             for label, sid in _SIJ_ITEMS:
                 yield CheckButton(label, id=sid)

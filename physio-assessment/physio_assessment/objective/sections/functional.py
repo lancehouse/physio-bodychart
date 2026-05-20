@@ -115,7 +115,7 @@ class FunctionalSection(BaseSection):
         yield Label("07 Functional", classes="section_title")
 
         # ── Functional Movement Observation ───────────────────────────────────
-        yield Label("Functional Movement", classes="subsection_header")
+        yield Label("Functional Movement", classes="subsection_header", id="fn_movement")
         for label, fid, opts in _FM_SINGLE:
             with Horizontal(classes="obs_row"):
                 yield Static(label, classes="obs_lbl")
@@ -134,7 +134,7 @@ class FunctionalSection(BaseSection):
             yield RadioGroup(_FUNC3, id="ft_sls_r")
 
         # ── Balance (Steffen 2002) ────────────────────────────────────────────
-        yield Label("Balance  (Steffen 2002)", classes="subsection_header")
+        yield Label("Balance  (Steffen 2002)", classes="subsection_header", id="fn_balance")
         with Horizontal(classes="tbl_hdr"):
             yield Static("",         classes="tbl_hdr_lbl")
             yield Static("Left  s",  classes="tbl_hdr_col")
@@ -149,7 +149,7 @@ class FunctionalSection(BaseSection):
                     yield Static("", classes="tbl_empty")
 
         # ── Timed Capability Measures ─────────────────────────────────────────
-        yield Label("Timed Capability Measures", classes="subsection_header")
+        yield Label("Timed Capability Measures", classes="subsection_header", id="fn_timed")
         for label, fid, unit in _CAP_ROWS:
             with Horizontal(classes="tbl_row"):
                 yield Static(label, classes="tbl_lbl")

@@ -248,7 +248,7 @@ class MedicalSection(BaseSection):
         yield Label("— Red Flags —", classes="subsection_header", id="med_red_flags")
         yield Static("", id="med_rf_alert")
 
-        yield Label("Malignancy:", classes="subgroup_header")
+        yield Label("Malignancy:", classes="subgroup_header", id="rf_malignancy")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Unexplained weight loss",   id="rf_weight_loss")
             yield FlagButton("Cancer history",            id="rf_cancer_history")
@@ -258,7 +258,7 @@ class MedicalSection(BaseSection):
             yield Label("Comment:")
             yield TextArea(id="rf_malignancy_comment", language="plain")
 
-        yield Label("Fracture:", classes="subgroup_header")
+        yield Label("Fracture:", classes="subgroup_header", id="rf_fracture")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Significant trauma",          id="rf_trauma")
             yield FlagButton("Prolonged corticosteroids",   id="rf_corticosteroids_fracture")
@@ -267,7 +267,7 @@ class MedicalSection(BaseSection):
             yield Label("Comment:")
             yield TextArea(id="rf_fracture_comment", language="plain")
 
-        yield Label("Infection:", classes="subgroup_header")
+        yield Label("Infection:", classes="subgroup_header", id="rf_infection")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Fever",                      id="rf_fever")
             yield FlagButton("Immunosuppressed",           id="rf_immunosuppressed")
@@ -276,7 +276,7 @@ class MedicalSection(BaseSection):
             yield Label("Comment:")
             yield TextArea(id="rf_infection_comment", language="plain")
 
-        yield Label("Cauda Equina Compression (URGENT):", classes="subgroup_header")
+        yield Label("Cauda Equina Compression (URGENT):", classes="subgroup_header", id="rf_cauda_equina")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Saddle / perineal anaesthesia", id="rf_saddle_anaesthesia")
             yield FlagButton("Bladder disturbance",           id="rf_bladder_disturbance")
@@ -285,7 +285,7 @@ class MedicalSection(BaseSection):
             yield Label("Action taken:")
             yield TextArea(id="cauda_equina_action", language="plain")
 
-        yield Label("Spinal Cord Compression (URGENT):", classes="subgroup_header")
+        yield Label("Spinal Cord Compression (URGENT):", classes="subgroup_header", id="rf_spinal_cord")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Bilateral paraesthesia / weakness", id="rf_bilateral_paraesthesia")
             yield FlagButton("Gait / balance disturbance",        id="rf_gait_disturbance")
@@ -293,7 +293,7 @@ class MedicalSection(BaseSection):
             yield Label("Action taken:")
             yield TextArea(id="spinal_cord_action", language="plain")
 
-        yield Label("Upper Motor Neurone Signs:", classes="subgroup_header")
+        yield Label("Upper Motor Neurone Signs:", classes="subgroup_header", id="rf_umn_signs")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Hyperreflexia",          id="umn_hyperreflexia")
             yield FlagButton("Babinski +ve",           id="umn_babinski")
@@ -307,7 +307,7 @@ class MedicalSection(BaseSection):
         # ── Differential Screening ───────────────────────────────────────
         yield Label("— Differential Screening —", classes="subsection_header", id="med_differential")
 
-        yield Label("Ankylosing Spondylitis:", classes="subgroup_header")
+        yield Label("Ankylosing Spondylitis:", classes="subgroup_header", id="diff_as")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Insidious onset",           id="diff_as_insidious")
             yield FlagButton("Lumbar / SIJ spreading",    id="diff_as_lumbar_sij")
@@ -319,7 +319,7 @@ class MedicalSection(BaseSection):
             yield Label("Action:")
             yield TextArea(id="diff_as_action", language="plain")
 
-        yield Label("Abdominal Aortic Aneurysm:", classes="subgroup_header")
+        yield Label("Abdominal Aortic Aneurysm:", classes="subgroup_header", id="diff_aaa")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Pulsating lumbar / groin pain",    id="diff_aaa_pulsating")
             yield FlagButton("Age >50",                          id="diff_aaa_age_50")
@@ -330,7 +330,7 @@ class MedicalSection(BaseSection):
             yield Label("Action:")
             yield TextArea(id="diff_aaa_action", language="plain")
 
-        yield Label("Vascular Claudication:", classes="subgroup_header")
+        yield Label("Vascular Claudication:", classes="subgroup_header", id="diff_vc")
         with Horizontal(classes="btn_row"):
             yield FlagButton("Non-dermatomal leg symptoms",          id="diff_vc_non_dermatomal")
             yield FlagButton("Age >50",                              id="diff_vc_age_50")

@@ -127,7 +127,7 @@ class PassiveMovementSection(BaseSection):
         yield Label("03 Passive Movement & Overpressure", classes="section_title")
 
         # ── Overpressure ──────────────────────────────────────────────────────
-        yield Label("Overpressure", classes="subsection_header")
+        yield Label("Overpressure", classes="subsection_header", id="pm_overpressure")
         with Horizontal(classes="op_hdr"):
             yield Static("",          classes="op_hdr_lbl")
             yield Static("End-feel",  classes="op_hdr_ef")
@@ -143,7 +143,7 @@ class PassiveMovementSection(BaseSection):
         yield TextArea(id="pm_op_notes", language="plain")
 
         # ── PAIVMs ────────────────────────────────────────────────────────────
-        yield Label("PAIVMs", classes="subsection_header")
+        yield Label("PAIVMs", classes="subsection_header", id="pm_paivms")
         with Horizontal(classes="paivm_hdr"):
             yield Static("",        classes="paivm_hdr_lbl")
             yield Static("Left",    classes="paivm_hdr_col")

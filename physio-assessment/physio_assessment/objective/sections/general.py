@@ -85,7 +85,7 @@ class GeneralSection(BaseSection):
         yield Label("01 General Observation", classes="section_title")
 
         # ── Physical ──────────────────────────────────────────────────────────
-        yield Label("Physical", classes="subsection_header")
+        yield Label("Physical", classes="subsection_header", id="go_physical")
         with Horizontal(classes="stats_row"):
             yield Static("Height",           classes="stats_lbl")
             yield Input(placeholder="cm",    id="go_height",  classes="stats_input")
@@ -108,7 +108,7 @@ class GeneralSection(BaseSection):
             yield Input(id="go_transfer_cmt", classes="obs_cmt")
 
         # ── Posture ───────────────────────────────────────────────────────────
-        yield Label("Posture", classes="subsection_header")
+        yield Label("Posture", classes="subsection_header", id="go_posture")
         for label, key, opts in self._POSTURE_ROWS:
             with Horizontal(classes="obs_row"):
                 yield Static(label, classes="obs_label")
@@ -118,7 +118,7 @@ class GeneralSection(BaseSection):
         yield TextArea(id="go_posture_notes", language="plain")
 
         # ── Functional Movement ───────────────────────────────────────────────
-        yield Label("Functional Movement", classes="subsection_header")
+        yield Label("Functional Movement", classes="subsection_header", id="go_functional_movement")
         for label, key, opts in self._FUNCTIONAL_ROWS:
             with Horizontal(classes="obs_row"):
                 yield Static(label, classes="obs_label")
